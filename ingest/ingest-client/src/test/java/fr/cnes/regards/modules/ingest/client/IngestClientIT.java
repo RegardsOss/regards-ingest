@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -19,81 +19,117 @@
 package fr.cnes.regards.modules.ingest.client;
 
 import java.nio.file.Paths;
-import java.time.OffsetDateTime;
-import java.util.Collection;
+import java.util.UUID;
 
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
 
-import com.google.gson.Gson;
+import com.google.common.collect.Sets;
 
-import fr.cnes.regards.framework.feign.FeignClientBuilder;
-import fr.cnes.regards.framework.feign.TokenClientProvider;
-import fr.cnes.regards.framework.feign.security.FeignSecurityManager;
+import fr.cnes.regards.framework.amqp.event.Target;
 import fr.cnes.regards.framework.multitenant.IRuntimeTenantResolver;
+import fr.cnes.regards.framework.oais.urn.DataType;
+import fr.cnes.regards.framework.oais.urn.EntityType;
 import fr.cnes.regards.framework.test.integration.AbstractRegardsWebIT;
-import fr.cnes.regards.modules.ingest.domain.builder.SIPBuilder;
-import fr.cnes.regards.modules.ingest.domain.builder.SIPCollectionBuilder;
-import fr.cnes.regards.modules.ingest.domain.dto.SIPDto;
-import fr.cnes.regards.modules.ingest.domain.entity.IngestProcessingChain;
+import fr.cnes.regards.modules.ingest.domain.chain.IngestProcessingChain;
+import fr.cnes.regards.modules.ingest.domain.sip.SIPState;
+import fr.cnes.regards.modules.ingest.dto.aip.StorageMetadata;
+import fr.cnes.regards.modules.ingest.dto.sip.IngestMetadataDto;
+import fr.cnes.regards.modules.ingest.dto.sip.SIP;
+import fr.cnes.regards.modules.ingest.service.chain.IngestProcessingChainService;
+import fr.cnes.regards.modules.storage.client.test.StorageClientMock;
+import fr.cnes.regards.modules.test.IngestServiceTest;
 
 /**
- * Test Ingest API through its client
- * @author Marc Sordi
+ * Test asychronous ingestion client
+ *
+ * @author Marc SORDI
  */
-@TestPropertySource(properties = { "spring.jpa.properties.hibernate.default_schema=ingestclientit" })
+@TestPropertySource(properties = { "spring.jpa.properties.hibernate.default_schema=ingestclient",
+        "regards.amqp.enabled=true", "regards.aips.save-metadata.bulk.delay=100" })
+@ContextConfiguration(classes = { IngestClientIT.IngestConfiguration.class })
+@ActiveProfiles(value = { "default", "test", "testAmqp", "StorageClientMock" }, inheritProfiles = false)
 public class IngestClientIT extends AbstractRegardsWebIT {
 
+    @SuppressWarnings("unused")
     private static final Logger LOGGER = LoggerFactory.getLogger(IngestClientIT.class);
-
-    @Value("${server.address}")
-    private String serverAddress;
-
-    private IIngestClient client;
 
     @Autowired
     private IRuntimeTenantResolver runtimeTenantResolver;
 
     @Autowired
-    private Gson gson;
+    private IIngestClient ingestClient;
+
+    @SpyBean
+    private TestIngestClientListener listener;
 
     @Autowired
-    private FeignSecurityManager feignSecurityManager;
+    private StorageClientMock storageClientMock;
+
+    @Autowired
+    private IngestServiceTest ingestServiceTest;
+
+    @Autowired
+    private IngestProcessingChainService procCahinService;
 
     @Before
-    public void init() {
-        client = FeignClientBuilder.build(
-                                          new TokenClientProvider<>(IIngestClient.class,
-                                                  "http://" + serverAddress + ":" + getPort(), feignSecurityManager),
-                                          gson);
+    public void doInit() throws Exception {
+        // Re-set tenant because above simulation clear it!
         runtimeTenantResolver.forceTenant(getDefaultTenant());
-        FeignSecurityManager.asSystem();
+        storageClientMock.setBehavior(true, true);
+        ingestServiceTest.init();
+        procCahinService.initDefaultServiceConfiguration();
+        ingestServiceTest.cleanAMQPQueues(IngestRequestEventHandler.class, Target.ONE_PER_MICROSERVICE_TYPE);
+        listener.clear();
     }
 
-    @Override
-    protected Logger getLogger() {
-        return LOGGER;
+    @Configuration
+    @ComponentScan(basePackages = { "fr.cnes.regards.modules" })
+    static class IngestConfiguration {
     }
 
     @Test
-    public void ingestSIP() {
-        SIPCollectionBuilder collectionBuilder = new SIPCollectionBuilder(
-                IngestProcessingChain.DEFAULT_INGEST_CHAIN_LABEL);
+    public void ingest() throws IngestClientException, InterruptedException {
 
-        SIPBuilder sipBuilder = new SIPBuilder("CLIENT_SIP_001");
-        String filename = OffsetDateTime.now().toString();
+        String providerId = "sipFromClient";
+        RequestInfo clientInfo = ingestClient.ingest(IngestMetadataDto
+                .build("sessionOwner", "session", IngestProcessingChain.DEFAULT_INGEST_CHAIN_LABEL,
+                       Sets.newHashSet("cat 1"), StorageMetadata.build("disk")), create(providerId));
+        ingestServiceTest.waitForIngestion(1, 15_000, SIPState.STORED);
 
-        collectionBuilder.add(sipBuilder.buildReference(Paths.get(filename), "sdflksdlkfjlsd45fg46sdfgdf"));
+        Mockito.verify(listener, Mockito.times(1)).onGranted(Mockito.anyCollection());
+        Assert.assertEquals(clientInfo.getRequestId(), listener.getGranted().iterator().next().getRequestId());
 
-        ResponseEntity<Collection<SIPDto>> entities = client.ingest(collectionBuilder.build());
-        Assert.assertEquals(HttpStatus.CREATED, entities.getStatusCode());
+        Thread.sleep(5_000);
+
+        Mockito.verify(listener, Mockito.times(1)).onSuccess(Mockito.anyCollection());
+        Assert.assertEquals(clientInfo.getRequestId(), listener.getSuccess().iterator().next().getRequestId());
+    }
+
+    private SIP create(String providerId) {
+
+        String fileName = String.format("file-%s.dat", providerId);
+        SIP sip = SIP.build(EntityType.DATA, providerId);
+        sip.withDataObject(DataType.RAWDATA, Paths.get("src", "main", "test", "resources", "data", fileName), "MD5",
+                           UUID.randomUUID().toString());
+        sip.withSyntax(MediaType.APPLICATION_JSON_UTF8);
+        sip.registerContentInformation();
+
+        // Add creation event
+        sip.withEvent(String.format("SIP %s generated", providerId));
+
+        return sip;
     }
 }

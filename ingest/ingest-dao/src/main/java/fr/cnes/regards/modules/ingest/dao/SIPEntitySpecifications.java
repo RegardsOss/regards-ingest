@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -18,47 +18,53 @@
  */
 package fr.cnes.regards.modules.ingest.dao;
 
+import fr.cnes.regards.framework.oais.urn.EntityType;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
 
 import javax.persistence.criteria.Predicate;
 
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 
 import com.google.common.collect.Sets;
 
-import fr.cnes.regards.modules.ingest.domain.entity.SIPEntity;
-import fr.cnes.regards.modules.ingest.domain.entity.SIPState;
+import fr.cnes.regards.framework.jpa.utils.SpecificationUtils;
+import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
+import fr.cnes.regards.modules.ingest.domain.sip.SIPState;
 
 /**
  * JPA {@link Specification} to define {@link Predicate}s for criteria search for {@link SIPEntity} from repository.
  * @author Sébastien Binda
+ * @author Léo Mieulet
  */
 public final class SIPEntitySpecifications {
 
-    private static final String LIKE_CHAR = "%";
+    private static final String PROVIDER_ID = "providerId";
 
     private SIPEntitySpecifications() {
+        throw new IllegalStateException("Utility class");
     }
 
     /**
-     * Filter on the given attributes (sessionId, owner, ingestDate and state) and return result ordered by descending
+     * Filter on the given attributes and return result ordered by descending
      * ingestDate
+     * @param providerIds list of providerId to keep or ignore (depends on areIdListInclusive)
+     * @param sipIds list of sipId to keep or ignore (depends on areIdListInclusive)
+     * @param sessionOwner
+     * @param session
+     * @param from
+     * @param states list of states
+     * @param areIdListInclusive true when sipIds and providerIds should be include in the request, otherwise these
+     * @param page
      */
-    public static Specification<SIPEntity> search(String providerId, String sesssionId, String owner,
-            OffsetDateTime from, List<SIPState> states, String processing) {
+    public static Specification<SIPEntity> search(Set<String> providerIds, Set<String> sipIds, String sessionOwner,
+            String session, EntityType ipType, OffsetDateTime from, List<SIPState> states, boolean areIdListInclusive, List<String> tags,
+            Set<String> categories, Pageable page) {
         return (root, query, cb) -> {
             Set<Predicate> predicates = Sets.newHashSet();
-            if (sesssionId != null) {
-                predicates.add(cb.equal(root.get("session").get("id"), sesssionId));
-            }
-            if (owner != null) {
-                predicates.add(cb.equal(root.get("owner"), owner));
-            }
-            if (from != null) {
-                predicates.add(cb.greaterThanOrEqualTo(root.get("ingestDate"), from));
-            }
             if ((states != null) && !states.isEmpty()) {
                 Set<Predicate> statePredicates = Sets.newHashSet();
                 for (SIPState state : states) {
@@ -66,17 +72,50 @@ public final class SIPEntitySpecifications {
                 }
                 predicates.add(cb.or(statePredicates.toArray(new Predicate[statePredicates.size()])));
             }
-            if (providerId != null) {
-                if (providerId.startsWith(LIKE_CHAR) || providerId.endsWith(LIKE_CHAR)) {
-                    predicates.add(cb.like(root.get("providerId"), providerId));
-                } else {
-                    predicates.add(cb.equal(root.get("providerId"), providerId));
+            if ((providerIds != null) && !providerIds.isEmpty()) {
+                Set<Predicate> providerIdPredicates = Sets.newHashSet();
+                for (String providerId : providerIds) {
+                    // Use the like operator only if the providerId contains a % directly in the chain
+                    if (providerId.startsWith(SpecificationUtils.LIKE_CHAR)
+                            || providerId.endsWith(SpecificationUtils.LIKE_CHAR)) {
+                        if (areIdListInclusive) {
+                            providerIdPredicates.add(cb.like(root.get(PROVIDER_ID), providerId));
+                        } else {
+                            providerIdPredicates.add(cb.notLike(root.get(PROVIDER_ID), providerId));
+                        }
+                    } else {
+                        if (areIdListInclusive) {
+                            providerIdPredicates.add(cb.equal(root.get(PROVIDER_ID), providerId));
+                        } else {
+                            providerIdPredicates.add(cb.notEqual(root.get(PROVIDER_ID), providerId));
+                        }
+                    }
                 }
+                predicates.add(cb.or(providerIdPredicates.toArray(new Predicate[providerIdPredicates.size()])));
             }
-            if (processing != null) {
-                predicates.add(cb.equal(root.get("processing"), processing));
+            if (from != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("lastUpdate"), from));
             }
-            query.orderBy(cb.desc(root.get("ingestDate")));
+            if ((sipIds != null) && !sipIds.isEmpty()) {
+                Set<Predicate> sipIdsPredicates = Sets.newHashSet();
+                for (String sipId : sipIds) {
+                    if (areIdListInclusive) {
+                        sipIdsPredicates.add(cb.equal(root.get("sipId"), sipId));
+                    } else {
+                        sipIdsPredicates.add(cb.notEqual(root.get("sipId"), sipId));
+                    }
+                }
+                predicates.add(cb.or(sipIdsPredicates.toArray(new Predicate[sipIdsPredicates.size()])));
+            }
+
+            predicates.addAll(OAISEntitySpecification.buildCommonPredicate(root, cb, tags, sessionOwner, session,
+                    ipType, null, categories));
+
+            // Add order
+            Sort.Direction defaultDirection = Sort.Direction.ASC;
+            String defaultAttribute = "creationDate";
+            query.orderBy(SpecificationUtils.buildOrderBy(page, root, cb, defaultAttribute, defaultDirection));
+
             return cb.and(predicates.toArray(new Predicate[predicates.size()]));
         };
     }

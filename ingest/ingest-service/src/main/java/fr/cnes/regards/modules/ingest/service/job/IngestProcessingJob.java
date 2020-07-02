@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -26,30 +26,34 @@ import java.util.Set;
 import java.util.StringJoiner;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 
 import com.google.gson.reflect.TypeToken;
+
 import fr.cnes.regards.framework.modules.jobs.domain.AbstractJob;
 import fr.cnes.regards.framework.modules.jobs.domain.JobParameter;
 import fr.cnes.regards.framework.modules.jobs.domain.exception.JobParameterInvalidException;
 import fr.cnes.regards.framework.modules.jobs.domain.exception.JobParameterMissingException;
 import fr.cnes.regards.framework.modules.jobs.domain.step.IProcessingStep;
 import fr.cnes.regards.framework.modules.jobs.domain.step.ProcessingStepException;
-import fr.cnes.regards.framework.modules.plugins.service.IPluginService;
 import fr.cnes.regards.framework.notification.NotificationLevel;
 import fr.cnes.regards.framework.notification.client.INotificationClient;
 import fr.cnes.regards.framework.security.role.DefaultRole;
 import fr.cnes.regards.modules.ingest.dao.IIngestProcessingChainRepository;
-import fr.cnes.regards.modules.ingest.domain.SIP;
-import fr.cnes.regards.modules.ingest.domain.entity.IngestProcessingChain;
-import fr.cnes.regards.modules.ingest.domain.entity.SIPEntity;
-import fr.cnes.regards.modules.ingest.service.chain.IIngestProcessingService;
+import fr.cnes.regards.modules.ingest.domain.aip.AIPEntity;
+import fr.cnes.regards.modules.ingest.domain.chain.IngestProcessingChain;
+import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequest;
+import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
+import fr.cnes.regards.modules.ingest.dto.aip.AIP;
+import fr.cnes.regards.modules.ingest.dto.sip.SIP;
 import fr.cnes.regards.modules.ingest.service.chain.step.GenerationStep;
+import fr.cnes.regards.modules.ingest.service.chain.step.InternalFinalStep;
+import fr.cnes.regards.modules.ingest.service.chain.step.InternalInitialStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.PostprocessingStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.PreprocessingStep;
-import fr.cnes.regards.modules.ingest.service.chain.step.StoreStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.TaggingStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.ValidationStep;
-import fr.cnes.regards.modules.storage.domain.AIP;
+import fr.cnes.regards.modules.ingest.service.request.IIngestRequestService;
 
 /**
  * This job manages processing chain for AIP generation from a SIP
@@ -62,30 +66,44 @@ public class IngestProcessingJob extends AbstractJob<Void> {
 
     public static final String IDS_PARAMETER = "ids";
 
+    private static final String INFO_TAB = "     >>>>>     ";
+
+    @Autowired
+    private AutowireCapableBeanFactory beanFactory;
+
     @Autowired
     private IIngestProcessingChainRepository processingChainRepository;
 
     @Autowired
-    private IPluginService pluginService;
-
-    @Autowired
-    private IIngestProcessingService ingestProcessingService;
+    private IIngestRequestService ingestRequestService;
 
     @Autowired
     private INotificationClient notificationClient;
 
-    private IngestProcessingChain processingChain;
+    private IngestProcessingChain ingestChain;
 
-    private Set<SIPEntity> entities;
+    private List<IngestRequest> requests;
 
     /**
-     * Entity at work
+     * The request we are currently processing
+     */
+    private IngestRequest request;
+
+    /**
+     * The SIP entity we are currently working on
      */
     private SIPEntity currentEntity;
 
     @Override
     public void setParameters(Map<String, JobParameter> parameters)
             throws JobParameterMissingException, JobParameterInvalidException {
+
+        // Load ingest requests
+        Type type = new TypeToken<Set<Long>>() {
+
+        }.getType();
+        Set<Long> ids = getValue(parameters, IDS_PARAMETER, type);
+        requests = ingestRequestService.loadByIds(ids);
 
         // Retrieve processing chain from parameters
         String processingChainName = getValue(parameters, CHAIN_NAME_PARAMETER);
@@ -94,107 +112,134 @@ public class IngestProcessingJob extends AbstractJob<Void> {
         Optional<IngestProcessingChain> chain = processingChainRepository.findOneByName(processingChainName);
         if (!chain.isPresent()) {
             String message = String.format("No related chain has been found for value \"%s\"", processingChainName);
+            // Monitoring
+            ingestRequestService.handleUnknownChain(requests);
             handleInvalidParameter(CHAIN_NAME_PARAMETER, message);
         } else {
-            processingChain = chain.get();
+            ingestChain = chain.get();
         }
-
-        // Load entities
-        Type type = new TypeToken<Set<Long>>() {
-
-        }.getType();
-        Set<Long> ids = getValue(parameters, IDS_PARAMETER, type);
-        entities = ingestProcessingService.getAllSipEntities(ids);
     }
 
     @Override
     public void run() {
         // Lets prepare a fex things in case there is errors
         StringJoiner notifMsg = new StringJoiner("\n");
-        notifMsg.add("Errors occurred during SIPs processing using " + processingChain.getName() + ":");
-        boolean errorOccured = false;
+        notifMsg.add("Errors occurred during SIPs processing using " + ingestChain.getName() + ":");
+
+        // Internal initial step
+        IProcessingStep<IngestRequest, SIPEntity> initStep = new InternalInitialStep(this, ingestChain);
+        beanFactory.autowireBean(initStep);
 
         // Initializing steps
         // Step 1 : optional preprocessing
-        IProcessingStep<SIP, SIP> preStep = new PreprocessingStep(this);
+        IProcessingStep<SIP, SIP> preStep = new PreprocessingStep(this, ingestChain);
+        beanFactory.autowireBean(preStep);
         // Step 2 : required validation
-        IProcessingStep<SIP, Void> validationStep = new ValidationStep(this);
+        IProcessingStep<SIP, Void> validationStep = new ValidationStep(this, ingestChain);
+        beanFactory.autowireBean(validationStep);
         // Step 3 : required AIP generation
-        IProcessingStep<SIP, List<AIP>> generationStep = new GenerationStep(this);
-        // Step 5 : optional AIP tagging
-        IProcessingStep<List<AIP>, Void> taggingStep = new TaggingStep(this);
-        // Step 6
-        IProcessingStep<List<AIP>, Void> storeStep = new StoreStep(this);
-        // Step 7 : optional postprocessing
-        IProcessingStep<SIP, Void> postprocessingStep = new PostprocessingStep(this);
+        IProcessingStep<SIPEntity, List<AIP>> generationStep = new GenerationStep(this, ingestChain);
+        beanFactory.autowireBean(generationStep);
+        // Step 4 : optional AIP tagging
+        IProcessingStep<List<AIP>, Void> taggingStep = new TaggingStep(this, ingestChain);
+        beanFactory.autowireBean(taggingStep);
+        // Step 5 : optional postprocessing
+        IProcessingStep<SIP, Void> postprocessingStep = new PostprocessingStep(this, ingestChain);
+        beanFactory.autowireBean(postprocessingStep);
 
-        for (SIPEntity entity : entities) {
-            currentEntity = entity;
+        // Internal final step
+        IProcessingStep<List<AIP>, List<AIPEntity>> finalStep = new InternalFinalStep(this, ingestChain);
+        beanFactory.autowireBean(finalStep);
+
+        long start = System.currentTimeMillis();
+        int sipIngested = 0;
+        int sipInError = 0;
+
+        for (IngestRequest request : requests) {
+            //FIXME add logic to handle interruption
+            this.request = request;
             try {
-                // Step 1 : optional preprocessing
-                SIP sip = preStep.execute(entity.getSip());
-                // Step 2 : required validation
-                validationStep.execute(sip);
-                // Step 3 : required AIP generation
-                List<AIP> aips = generationStep.execute(sip);
-                // Step 4 : Save the session inside the AIP - no plugin involved
-                aips = setSessionOnAips(entity, aips);
-                // Step 5 : optional AIP tagging
-                taggingStep.execute(aips);
-                // Step 6
-                storeStep.execute(aips);
-                // Step 7 : optional postprocessing
-                postprocessingStep.execute(sip);
+                long start2 = System.currentTimeMillis();
+                List<AIP> aips;
+                // retry the process only from the the step needed
+                switch (request.getStep()) {
+                    case LOCAL_SCHEDULED:
+                    case LOCAL_INIT:
+                    case LOCAL_PRE_PROCESSING:
+                    case LOCAL_VALIDATION:
+                    case LOCAL_GENERATION:
+                    case LOCAL_TAGGING:
+                    case LOCAL_POST_PROCESSING:
+                        ingestRequestService.handleIngestJobStart(request);
+                        // Internal preparation step (no plugin involved)
+                        currentEntity = initStep.execute(request);
+                        // Step 1 : optional preprocessing
+                        SIP sip = preStep.execute(request.getSip());
+                        // Propagate to entity
+                        currentEntity.setSip(sip);
+                        // Step 2 : required validation
+                        validationStep.execute(sip);
+                        // Step 3 : required AIP generation
+                        aips = generationStep.execute(currentEntity);
+                        // Step 4 : optional AIP tagging
+                        taggingStep.execute(aips);
+                        // Step 5 : optional postprocessing
+                        postprocessingStep.execute(sip);
+                        // Internal finalization step (no plugin involved)
+                        // Do all persistence actions in this step
+                        finalStep.execute(aips);
+                        break;
+                    case LOCAL_FINAL:
+                    case REMOTE_STORAGE_REQUESTED:
+                    case REMOTE_STORAGE_ERROR:
+                    case REMOTE_STORAGE_DENIED:
+                        // According to storage dev, it is better to simply request a new storage,
+                        // if request already exists anyway it will be retried
+                        ingestRequestService.requestRemoteStorage(request);
+
+                        break;
+                    default:
+                        logger.debug("{}SIP \"{}\" ingestion has been retried and nothing had to be done in local",
+                                     INFO_TAB, request.getSip().getId());
+                        break;
+                }
+                sipIngested++;
+                logger.debug("{}SIP \"{}\" ingested in {} ms", INFO_TAB, request.getSip().getId(),
+                             System.currentTimeMillis() - start2);
+
             } catch (ProcessingStepException e) {
-                errorOccured = true;
-                String msg = String.format("Error while ingesting SIP \"%s\" with provider id \"%s\"",
-                                           currentEntity.getSipId(),
-                                           currentEntity.getProviderId());
+                logger.error("SIP \"{}\" ingestion error", request.getSip().getId());
+                sipInError++;
+                String msg = String.format("Error while ingesting SIP \"%s\" in request \"%s\"",
+                                           request.getSip().getId(), request.getRequestId());
                 notifMsg.add(msg);
-                super.logger.error(msg);
-                super.logger.error("Ingestion step error", e);
-                // Continuing with following SIPs
+                logger.error(msg);
+                logger.error("Ingestion step error", e);
+                // Continue with following SIPs
             }
         }
-        // notify if errors occured
-        if (errorOccured) {
-            notificationClient.notify(notifMsg.toString(),
-                                      "Error occurred during SIPs Ingestion.",
-                                      NotificationLevel.INFO,
-                                      DefaultRole.ADMIN);
-        }
-    }
 
-    /**
-     * Save the current session inside AIPs provenance info
-     * @param aips list of aips
-     * @return the updated list
-     */
-    private List<AIP> setSessionOnAips(SIPEntity entity, List<AIP> aips) {
-        for (AIP aip : aips) {
-            aip.getProperties().getPdi().getProvenanceInformation().setSession(entity.getSession().getId());
+        // notify if errors occurred
+        if (sipInError > 0) {
+            notificationClient.notify(notifMsg.toString(), "Error occurred during SIPs Ingestion.",
+                                      NotificationLevel.INFO, DefaultRole.ADMIN);
+            logger.error("{}{} SIP(s) INGESTED and {} in ERROR in {} ms", INFO_TAB, sipIngested, sipInError,
+                         System.currentTimeMillis() - start);
+        } else {
+            logger.info("{}{} SIP(s) INGESTED in {} ms", INFO_TAB, sipIngested, System.currentTimeMillis() - start);
         }
-        return aips;
     }
 
     @Override
     public int getCompletionCount() {
-        return 6;
-    }
-
-    public IPluginService getPluginService() {
-        return pluginService;
-    }
-
-    public IngestProcessingChain getProcessingChain() {
-        return processingChain;
-    }
-
-    public IIngestProcessingService getIngestProcessingService() {
-        return ingestProcessingService;
+        return 7;
     }
 
     public SIPEntity getCurrentEntity() {
         return currentEntity;
+    }
+
+    public IngestRequest getCurrentRequest() {
+        return request;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -30,7 +30,7 @@ import fr.cnes.regards.framework.jpa.multitenant.event.spring.TenantConnectionRe
 import fr.cnes.regards.framework.module.rest.exception.ModuleException;
 import fr.cnes.regards.framework.multitenant.IRuntimeTenantResolver;
 import fr.cnes.regards.framework.multitenant.ITenantResolver;
-import fr.cnes.regards.modules.ingest.domain.entity.IngestProcessingChain;
+import fr.cnes.regards.modules.ingest.domain.chain.IngestProcessingChain;
 
 /**
  * Module-common handler for AMQP events.
@@ -46,7 +46,7 @@ public class IngestProcessingChainEventHandler implements ApplicationListener<Ap
     private static final Logger LOGGER = LoggerFactory.getLogger(IngestProcessingChainEventHandler.class);
 
     @Autowired
-    private IIngestProcessingService ingestProcessingService;
+    private IIngestProcessingChainService ingestProcessingService;
 
     @Autowired
     private IRuntimeTenantResolver runtimeTenantResolver;

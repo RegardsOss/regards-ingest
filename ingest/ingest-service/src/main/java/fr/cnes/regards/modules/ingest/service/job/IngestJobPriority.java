@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -21,14 +21,67 @@ package fr.cnes.regards.modules.ingest.service.job;
 /**
  * Ingest jobs priority management
  * @author Marc Sordi
+ * @author Sébastien Binda
  *
  */
 public enum IngestJobPriority {
 
-    /**
-     * One SIP, one job!
-     */
     INGEST_PROCESSING_JOB_PRIORITY {
+
+        @Override
+        public int getPriority() {
+            return 0;
+        }
+    },
+
+    SESSION_DELETION_JOB_PRIORITY {
+
+        @Override
+        public int getPriority() {
+            return 0;
+        }
+    },
+
+    UPDATE_AIP_SCAN_JOB_PRIORITY {
+
+        @Override
+        public int getPriority() {
+            return 0;
+        }
+    },
+
+    UPDATE_AIP_RUNNER_PRIORITY {
+
+        @Override
+        public int getPriority() {
+            return 0;
+        }
+    },
+
+    AIP_SAVE_METADATA_RUNNER_PRIORITY {
+
+        @Override
+        public int getPriority() {
+            return 0;
+        }
+    },
+    OAIS_DELETION_JOB_PRIORITY {
+
+        @Override
+        public int getPriority() {
+            return 0;
+        }
+    },
+
+    REQUEST_DELETION_JOB_PRIORITY {
+
+        @Override
+        public int getPriority() {
+            return 0;
+        }
+    },
+
+    REQUEST_RETRY_JOB_PRIORITY {
 
         @Override
         public int getPriority() {

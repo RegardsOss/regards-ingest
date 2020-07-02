@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
- Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  
  This file is part of REGARDS.
  
@@ -27,14 +27,10 @@
 	<parent>
 		<groupId>fr.cnes.regards.modules</groupId>
 		<artifactId>ingest</artifactId>
-		<version>0.4.1</version>
+		<version>1.0.1</version>
 	</parent>
 
 	<dependencies>
-		<dependency>
-			<groupId>fr.cnes.regards.framework</groupId>
-  			<artifactId>feign-regards-starter</artifactId>
-		</dependency>
 		<dependency>
 			<groupId>fr.cnes.regards.modules.ingest</groupId>
 			<artifactId>ingest-dao</artifactId>
@@ -45,7 +41,11 @@
 		</dependency>
 		<dependency>
 			<groupId>fr.cnes.regards.modules.dam</groupId>
-			<artifactId>dam-domain</artifactId>
+			<artifactId>dam-dto</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>fr.cnes.regards.modules.session-manager</groupId>
+			<artifactId>session-manager-client</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>fr.cnes.regards.framework</groupId>
@@ -64,8 +64,8 @@
 			<artifactId>plugins-service</artifactId>
 		</dependency>
 		<dependency>
-			<groupId>fr.cnes.regards.modules.storage</groupId>
-			<artifactId>storage-client</artifactId>
+			<groupId>fr.cnes.regards.framework.modules.locks</groupId>
+			<artifactId>locks-service</artifactId>
 		</dependency>
 		<dependency>
   			<groupId>fr.cnes.regards.framework</groupId>
@@ -79,6 +79,16 @@
 			<groupId>fr.cnes.regards.modules.templates</groupId>
 			<artifactId>templates-service</artifactId>
 		</dependency>
+		<dependency>
+			<groupId>fr.cnes.regards.modules.storage</groupId>
+			<artifactId>storage-client</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>
+				spring-cloud-starter-netflix-eureka-client
+			</artifactId>
+		</dependency>
 		<!-- Test dependencies -->
 		<dependency>
 			<groupId>fr.cnes.regards.framework.test</groupId>
@@ -91,8 +101,8 @@
 			<scope>test</scope>
 		</dependency>
 		<dependency>
-			<groupId>fr.cnes.regards.framework.test</groupId>
-			<artifactId>regards-integration-test</artifactId>
+			<groupId>fr.cnes.regards.modules.ingest</groupId>
+			<artifactId>ingest-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>

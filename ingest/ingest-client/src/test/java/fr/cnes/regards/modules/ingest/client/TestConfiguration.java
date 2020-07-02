@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -18,26 +18,36 @@
  */
 package fr.cnes.regards.modules.ingest.client;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.List;
+
 import org.mockito.Mockito;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.discovery.DiscoveryClient;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 
-import fr.cnes.regards.modules.storage.client.IAipClient;
-import fr.cnes.regards.modules.storage.client.IAipEntityClient;
+import com.google.common.collect.Lists;
 
+/**
+ * Global test configuration for ingest tests
+ *
+ * @author Sébastien Binda
+ */
 @Configuration
-@ComponentScan(basePackages = { "fr.cnes.regards.modules" })
 public class TestConfiguration {
 
     @Bean
-    public IAipClient mockAIPClient() {
-        return Mockito.mock(IAipClient.class);
-    }
+    public DiscoveryClient discoveryClient() throws URISyntaxException {
 
-    @Bean
-    public IAipEntityClient mockAIPEntityClient() {
-        return Mockito.mock(IAipEntityClient.class);
-    }
+        DiscoveryClient client = Mockito.mock(DiscoveryClient.class);
+        List<ServiceInstance> response = Lists.newArrayList();
+        ServiceInstance service = Mockito.mock(ServiceInstance.class);
+        Mockito.when(service.getUri()).thenReturn(new URI("http://localhost:7777"));
+        response.add(service);
+        Mockito.when(client.getInstances(Mockito.anyString())).thenReturn(response);
+        return client;
 
+    }
 }

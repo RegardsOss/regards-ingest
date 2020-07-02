@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -22,7 +22,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Page;
@@ -31,18 +30,11 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
-import org.springframework.data.jpa.repository.Modifying;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 
-import fr.cnes.regards.modules.ingest.domain.entity.IngestProcessingChain;
-import fr.cnes.regards.modules.ingest.domain.entity.SIPEntity;
-import fr.cnes.regards.modules.ingest.domain.entity.SIPIdNProcessing;
-import fr.cnes.regards.modules.ingest.domain.entity.SIPSession;
-import fr.cnes.regards.modules.ingest.domain.entity.SIPState;
+import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
+import fr.cnes.regards.modules.ingest.domain.sip.SIPState;
 
 /**
  * {@link SIPEntity} repository
@@ -53,31 +45,20 @@ import fr.cnes.regards.modules.ingest.domain.entity.SIPState;
 public interface ISIPRepository extends JpaRepository<SIPEntity, Long>, JpaSpecificationExecutor<SIPEntity> {
 
     @Override
-    @EntityGraph("graph.sip.entity.complete")
     Optional<SIPEntity> findById(Long id);
-
-    /**
-     * Retrieve all {@link SIPEntity} for the given ids
-     * @param ids
-     * @return {@link SIPEntity}s
-     */
-    @EntityGraph("graph.sip.entity.complete")
-    Set<SIPEntity> findByIdIn(Collection<Long> ids);
 
     /**
      * Find last ingest SIP with specified SIP ID according to ingest date
      * @param providerId external SIP identifier
      * @return the latest registered SIP
      */
-    @EntityGraph("graph.sip.entity.complete")
-    SIPEntity findTopByProviderIdOrderByIngestDateDesc(String providerId);
+    SIPEntity findTopByProviderIdOrderByCreationDateDesc(String providerId);
 
     /**
      * Find all SIP version of a provider id
      * @param providerId provider id
      * @return all SIP versions of this provider id
      */
-    @EntityGraph("graph.sip.entity.complete")
     Collection<SIPEntity> findAllByProviderIdOrderByVersionAsc(String providerId);
 
     /**
@@ -85,85 +66,16 @@ public interface ISIPRepository extends JpaRepository<SIPEntity, Long>, JpaSpeci
      */
     long countByProviderIdAndStateIn(String providerId, Collection<SIPState> states);
 
+    long countByProviderId(String providerId);
+
     default long countByProviderIdAndStateIn(String providerId, SIPState... states) {
         return countByProviderIdAndStateIn(providerId, Arrays.asList(states));
     }
 
     /**
-     * Find all {@link SIPEntity}s by given {@link SIPState}
-     * @param state {@link SIPState}
-     * @return {@link SIPEntity}s
-     */
-    @EntityGraph("graph.sip.entity.complete")
-    Collection<SIPEntity> findAllByState(SIPState state);
-
-    /**
      * Find one {@link SIPEntity} by its unique ipId
      */
-    @EntityGraph("graph.sip.entity.complete")
     Optional<SIPEntity> findOneBySipId(String sipId);
-
-    /**
-     * Retrieve all {@link SIPEntity} for the given ipIds
-     * @param sipIds
-     * @return {@link SIPEntity}s
-     */
-    @EntityGraph("graph.sip.entity.complete")
-    Collection<SIPEntity> findBySipIdIn(Collection<String> sipIds);
-
-    /**
-     * Retrieve all {@link SIPEntity} associated to the given session id.
-     * @param sessionId {@link String}
-     * @return {@link SIPEntity}s
-     */
-    @EntityGraph("graph.sip.entity.complete")
-    Collection<SIPEntity> findBySessionId(String sessionId);
-
-    /**
-     * Find all {@link SIPEntity}s by given {@link SIPState}.
-     * Unlike findAllByState, the possibly huge parameter rawSip is not loaded.
-     * @param state {@link SIPState}
-     * @return {@link SIPEntity}s
-     */
-    List<SIPIdNProcessing> findIdAndProcessingByState(SIPState state);
-
-    /**
-     * Update state of a {@link SIPEntity}
-     * @param state new {@link SIPState}
-     * @param id id of the {@link SIPEntity} to update
-     */
-    @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("UPDATE SIPEntity s set s.state = :state where s.id = :id")
-    void updateSIPEntityState(@Param("state") SIPState state, @Param("id") Long id);
-
-    /**
-     * Update state for a set of {@link SIPEntity}
-     */
-    @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("UPDATE SIPEntity s set s.state = :state where s.id in (:ids)")
-    void updateSIPEntitiesState(@Param("state") SIPState state, @Param("ids") Collection<Long> ids);
-
-    /**
-     * Switch state for a given session
-     */
-    @Modifying
-    @Query("UPDATE SIPEntity s set s.state = :newState where s.state = :state AND s.session = :session")
-    void updateSIPEntityStateByStateAndSession(@Param("newState") SIPState state, @Param("state") SIPState filterState,
-            @Param("session") SIPSession session);
-
-    /**
-     * Count number of {@link SIPEntity} associated to a given session
-     * @param sessionId
-     * @return number of {@link SIPEntity}
-     */
-    long countBySessionId(String sessionId);
-
-    /**
-     * Count number of {@link SIPEntity} associated to a given session and in a specific given {@link SIPState}
-     * @param sessionId
-     * @return number of {@link SIPEntity}
-     */
-    long countBySessionIdAndStateIn(String sessionId, Collection<SIPState> states);
 
     /**
      * Check if SIP already ingested
@@ -172,23 +84,16 @@ public interface ISIPRepository extends JpaRepository<SIPEntity, Long>, JpaSpeci
      */
     Long countByChecksum(String checksum);
 
+    long countByState(SIPState sipState);
+
     /**
      * Get next version of the SIP identified by provider id
      * @param providerId provider id
      * @return next version
      */
     default Integer getNextVersion(String providerId) {
-        SIPEntity latest = findTopByProviderIdOrderByIngestDateDesc(providerId);
+        SIPEntity latest = findTopByProviderIdOrderByCreationDateDesc(providerId);
         return latest == null ? 1 : latest.getVersion() + 1;
-    }
-
-    /**
-     * Find all SIP version of a provider id
-     * @param providerId prodiver id
-     * @return all SIP versions of a provider id
-     */
-    default Collection<SIPEntity> getAllVersions(String providerId) {
-        return findAllByProviderIdOrderByVersionAsc(providerId);
     }
 
     /**
@@ -198,23 +103,17 @@ public interface ISIPRepository extends JpaRepository<SIPEntity, Long>, JpaSpeci
         return countByChecksum(checksum) != 0;
     }
 
-    Page<SIPEntity> findPageByState(SIPState state, Pageable pageable);
-
     default Page<SIPEntity> loadAll(Specification<SIPEntity> search, Pageable pageable) {
         // as a Specification is used to constrain the page, we cannot simply ask for ids with a query
         // to mimic that, we are querying without any entity graph to extract ids
         Page<SIPEntity> sips = findAll(search, pageable);
-        List<Long> sipIds = sips.stream().map(p -> p.getId())
-                .collect(Collectors.toList());
+        List<Long> sipIds = sips.stream().map(p -> p.getId()).collect(Collectors.toList());
         // now that we have the ids, lets load the products and keep the same sort
         List<SIPEntity> loaded = findAllByIdIn(sipIds, pageable.getSort());
-        return new PageImpl<>(loaded,
-                              PageRequest.of(sips.getNumber(),
-                                             sips.getSize(),
-                                             sips.getSort()),
-                              sips.getTotalElements());
+        return new PageImpl<>(loaded, PageRequest.of(sips.getNumber(), sips.getSize(), sips.getSort()),
+                sips.getTotalElements());
     }
 
-    @EntityGraph("graph.sip.entity.complete")
     List<SIPEntity> findAllByIdIn(List<Long> ingestProcChainIds, Sort sort);
+
 }

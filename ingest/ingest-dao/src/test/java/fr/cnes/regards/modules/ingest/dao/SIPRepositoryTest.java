@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -22,14 +22,14 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 import org.assertj.core.util.Lists;
+import org.assertj.core.util.Sets;
 import org.junit.Assert;
 import org.junit.Test;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
-import fr.cnes.regards.modules.ingest.domain.entity.SIPEntity;
-import fr.cnes.regards.modules.ingest.domain.entity.SIPIdNProcessing;
-import fr.cnes.regards.modules.ingest.domain.entity.SIPState;
+import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
+import fr.cnes.regards.modules.ingest.domain.sip.SIPState;
 
 /**
  * Test class to verify search with criterion of {@link SIPEntity} entities.
@@ -40,64 +40,72 @@ public class SIPRepositoryTest extends AbstractSIPRepositoryTest {
     @Test
     public void searchSipEntities() {
 
-        List<SIPEntity> res = sipRepository
-                .findAll(SIPEntitySpecifications.search(null, "sessionId", "admin", OffsetDateTime.now().minusHours(12),
-                                                        Lists.newArrayList(SIPState.CREATED), PROCESSING_CHAIN));
-        Assert.assertTrue(res.size() == 2);
+        Pageable page = PageRequest.of(0, 100);
+        List<SIPEntity> res = sipRepository.findAll(SIPEntitySpecifications
+                .search(null, null, SESSION_OWNER, SESSION, null, OffsetDateTime.now().minusHours(12),
+                        Lists.newArrayList(SIPState.INGESTED), true, null, null, page));
+        Assert.assertEquals(4, res.size());
+
+        res = sipRepository.findAll(SIPEntitySpecifications
+                .search(null, null, SESSION_OWNER, SESSION, null, OffsetDateTime.now().minusHours(1),
+                        Lists.newArrayList(SIPState.INGESTED), true, null, null, page));
+        Assert.assertEquals(1, res.size());
+
+        res = sipRepository.findAll(SIPEntitySpecifications.search(null, null, SESSION_OWNER, SESSION, null, null, null, true,
+                                                                   null, null, page));
+        Assert.assertEquals(4, res.size());
 
         res = sipRepository
-                .findAll(SIPEntitySpecifications.search(null, "sessionId", "admin", OffsetDateTime.now().minusHours(1),
-                                                        Lists.newArrayList(SIPState.CREATED), PROCESSING_CHAIN));
-        Assert.assertTrue(res.size() == 1);
-
-        res = sipRepository.findAll(SIPEntitySpecifications.search(null, "sessionId", null, null, null, null));
-        Assert.assertTrue(res.size() == 2);
-
-        res = sipRepository.findAll(SIPEntitySpecifications.search(null, null, "admin", null, null, null));
-        Assert.assertTrue(res.size() == 2);
-
-        res = sipRepository.findAll(SIPEntitySpecifications.search(null, null, null, null,
-                                                                   Lists.newArrayList(SIPState.CREATED), null));
-        Assert.assertTrue(res.size() == 2);
-
-        res = sipRepository.findAll(SIPEntitySpecifications.search(null, null, null, null, null, PROCESSING_CHAIN));
-        Assert.assertTrue(res.size() == 3);
+                .findAll(SIPEntitySpecifications.search(null, null, null, SESSION, null, null, null, true, null, null, page));
+        Assert.assertEquals(4, res.size());
 
         res = sipRepository
-                .findAll(SIPEntitySpecifications.search(null, "invalid", "admin", OffsetDateTime.now().minusHours(12),
-                                                        Lists.newArrayList(SIPState.CREATED), null));
-        Assert.assertTrue(res.size() == 0);
-
-        res = sipRepository.findAll(SIPEntitySpecifications.search(null, "sessionId", "unvalid",
-                                                                   OffsetDateTime.now().minusHours(12),
-                                                                   Lists.newArrayList(SIPState.CREATED), null));
-        Assert.assertTrue(res.size() == 0);
-
-        res = sipRepository.findAll(SIPEntitySpecifications.search(null, "sessionId", "admin", OffsetDateTime.now(),
-                                                                   Lists.newArrayList(SIPState.CREATED), null));
-        Assert.assertTrue(res.size() == 0);
+                .findAll(SIPEntitySpecifications.search(null, null, null, SESSION, null, null,
+                                                        Lists.newArrayList(SIPState.INGESTED), true, null, null, page));
+        Assert.assertEquals(4, res.size());
 
         res = sipRepository
-                .findAll(SIPEntitySpecifications.search(null, "sessionId", "admin", OffsetDateTime.now().minusHours(12),
-                                                        Lists.newArrayList(SIPState.AIP_CREATED), null));
-        Assert.assertTrue(res.size() == 0);
+                .findAll(SIPEntitySpecifications.search(null, null, null, null, null, null, null, true, null, null, page));
+        Assert.assertEquals(4, res.size());
 
-        res = sipRepository.findAll(SIPEntitySpecifications.search(null, null, null, null, null, null));
-        Assert.assertTrue(res.size() == 4);
+        res = sipRepository.findAll(SIPEntitySpecifications
+                .search(null, null, "invalid", "invalid", null, OffsetDateTime.now().minusHours(12),
+                        Lists.newArrayList(SIPState.INGESTED), true, null, null, page));
+        Assert.assertEquals(0, res.size());
+
+        res = sipRepository.findAll(SIPEntitySpecifications
+                .search(null, null, SESSION_OWNER, SESSION, null, OffsetDateTime.now().minusHours(12),
+                        Lists.newArrayList(SIPState.INGESTED), true, null, null, page));
+        Assert.assertEquals(4, res.size());
+
+        res = sipRepository
+                .findAll(SIPEntitySpecifications.search(null, null, SESSION_OWNER, SESSION, null, OffsetDateTime.now(),
+                                                        Lists.newArrayList(SIPState.INGESTED), true, null, null, page));
+        Assert.assertEquals(0, res.size());
+
+        res = sipRepository
+                .findAll(SIPEntitySpecifications.search(null, null, null, null, null, null, null, true, null, null, page));
+        Assert.assertEquals(4, res.size());
 
         // Check order by attribute on ingestDate
-        Assert.assertTrue(res.get(0).getIngestDate().compareTo(res.get(1).getIngestDate()) >= 0);
-        Assert.assertTrue(res.get(1).getIngestDate().compareTo(res.get(2).getIngestDate()) >= 0);
+        Assert.assertTrue(res.get(0).getCreationDate().compareTo(res.get(1).getCreationDate()) >= 0);
+        Assert.assertTrue(res.get(1).getCreationDate().compareTo(res.get(2).getCreationDate()) >= 0);
 
-        res = sipRepository.findAll(SIPEntitySpecifications.search("SIP_003", null, null, null, null, null));
-        Assert.assertTrue(res.size() == 2);
+        res = sipRepository.findAll(SIPEntitySpecifications.search(Sets.newLinkedHashSet("SIP_003"), null, null, null,
+                null, null, null, true, null, null, page));
+        Assert.assertEquals(2, res.size());
 
-    }
+        res = sipRepository.findAll(SIPEntitySpecifications.search(Sets.newLinkedHashSet("SIP_00%"), null, null, null,
+                null, null, null, false, null, null, page));
+        Assert.assertEquals(0, res.size());
 
-    @Test
-    public void testFindIdAndProcessingByState() {
-        List<SIPIdNProcessing> res = sipRepository.findIdAndProcessingByState(SIPState.CREATED);
-        Assert.assertEquals("There should be 2 sipIdNProcessing", 2, res.size());
+        res = sipRepository.findAll(SIPEntitySpecifications.search(null, Sets.newLinkedHashSet(sip1.getSipId()), null,
+                null, null, null, null, true, null, null, page));
+        Assert.assertEquals(1, res.size());
+
+        res = sipRepository.findAll(SIPEntitySpecifications.search(null, Sets.newLinkedHashSet(sip1.getSipId()), null,
+                null, null, null, null, false, null, null, page));
+        Assert.assertEquals(3, res.size());
     }
 
 }

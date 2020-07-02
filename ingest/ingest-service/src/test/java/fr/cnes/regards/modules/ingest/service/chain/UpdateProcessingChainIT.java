@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -27,6 +27,9 @@ import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.annotation.DirtiesContext.ClassMode;
+import org.springframework.test.annotation.DirtiesContext.HierarchyMode;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.junit4.SpringRunner;
@@ -38,7 +41,7 @@ import fr.cnes.regards.framework.module.rest.exception.ModuleException;
 import fr.cnes.regards.framework.modules.plugins.domain.PluginConfiguration;
 import fr.cnes.regards.framework.modules.plugins.service.IPluginService;
 import fr.cnes.regards.framework.utils.plugins.PluginUtils;
-import fr.cnes.regards.modules.ingest.domain.entity.IngestProcessingChain;
+import fr.cnes.regards.modules.ingest.domain.chain.IngestProcessingChain;
 import fr.cnes.regards.modules.ingest.service.plugin.AIPGenerationTestPlugin;
 import fr.cnes.regards.modules.ingest.service.plugin.ValidationTestPlugin;
 
@@ -48,15 +51,18 @@ import fr.cnes.regards.modules.ingest.service.plugin.ValidationTestPlugin;
  *
  */
 @RunWith(SpringRunner.class)
-@TestPropertySource(properties = { "spring.jpa.properties.hibernate.default_schema=ingestu", "jwt.secret=123456789",
-        "regards.workspace=target/workspace" })
+@DirtiesContext(classMode = ClassMode.AFTER_CLASS, hierarchyMode = HierarchyMode.EXHAUSTIVE)
+@TestPropertySource(
+        properties = { "spring.jpa.properties.hibernate.default_schema=ingestu", "jwt.secret=123456789",
+                "regards.workspace=target/workspace", "eureka.client.enabled=false" },
+        locations = { "classpath:application-test.properties" })
 @ContextConfiguration(classes = { UpdateProcessingChainIT.IngestConfiguration.class })
 public class UpdateProcessingChainIT extends AbstractDaoTest {
 
     private static final String CHAIN_NAME = "ipst_Chain1";
 
     @Autowired
-    private IIngestProcessingService ingestProcessingService;
+    private IIngestProcessingChainService ingestProcessingService;
 
     @Autowired
     private IPluginService pluginService;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
+ * Copyright 2017-2020 CNES - CENTRE NATIONAL d'ETUDES SPATIALES
  *
  * This file is part of REGARDS.
  *
@@ -29,6 +29,7 @@ import org.springframework.http.MediaType;
 import org.springframework.restdocs.request.ParameterDescriptor;
 import org.springframework.restdocs.request.RequestDocumentation;
 import org.springframework.restdocs.snippet.Attributes;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
@@ -40,13 +41,12 @@ import com.jayway.jsonpath.JsonPath;
 import fr.cnes.regards.framework.geojson.GeoJsonMediaType;
 import fr.cnes.regards.framework.jpa.utils.RegardsTransactional;
 import fr.cnes.regards.framework.microservice.rest.ModuleManagerController;
+import fr.cnes.regards.framework.modules.plugins.annotations.Plugin;
 import fr.cnes.regards.framework.modules.plugins.domain.PluginConfiguration;
 import fr.cnes.regards.framework.modules.plugins.domain.PluginMetaData;
 import fr.cnes.regards.framework.test.integration.AbstractRegardsTransactionalIT;
 import fr.cnes.regards.framework.test.integration.RequestBuilderCustomizer;
-import fr.cnes.regards.modules.ingest.domain.entity.IngestProcessingChain;
-import fr.cnes.regards.modules.ingest.domain.plugin.IAipGeneration;
-import fr.cnes.regards.modules.ingest.domain.plugin.ISipValidation;
+import fr.cnes.regards.modules.ingest.domain.chain.IngestProcessingChain;
 import fr.cnes.regards.modules.ingest.service.plugin.FakeAIPGenerationTestPlugin;
 import fr.cnes.regards.modules.ingest.service.plugin.FakeValidationTestPlugin;
 
@@ -59,7 +59,9 @@ import fr.cnes.regards.modules.ingest.service.plugin.FakeValidationTestPlugin;
  *
  */
 @RegardsTransactional
-@TestPropertySource(properties = { "spring.jpa.properties.hibernate.default_schema=ingest_it" })
+@TestPropertySource(properties = { "spring.jpa.properties.hibernate.default_schema=ingest_it",
+        "regards.aips.save-metadata.bulk.delay=100", "regards.ingest.aip.delete.bulk.delay=100" })
+@ActiveProfiles(value = { "default", "test" }, inheritProfiles = false)
 public class IngestProcessingChainControllerIT extends AbstractRegardsTransactionalIT {
 
     private final static String INGEST_PROCESSING_DESCRIPTION = "The ingestion processing chain name";
@@ -227,14 +229,10 @@ public class IngestProcessingChainControllerIT extends AbstractRegardsTransactio
     }
 
     private IngestProcessingChain create() {
-        PluginConfiguration validationConf = new PluginConfiguration(
-                getPluginMetaData("FakeValidationTestPlugin", FakeValidationTestPlugin.class.getCanonicalName(),
-                                  ISipValidation.class.getCanonicalName()),
-                "FakeValidationTestPlugin");
-        PluginConfiguration generationConf = new PluginConfiguration(
-                getPluginMetaData("FakeAIPGenerationTestPlugin", FakeAIPGenerationTestPlugin.class.getCanonicalName(),
-                                  IAipGeneration.class.getCanonicalName()),
-                "FakeAIPGenerationTestPlugin");
+        PluginConfiguration validationConf = new PluginConfiguration("FakeValidationTestPlugin",
+                FakeValidationTestPlugin.class.getAnnotation(Plugin.class).id());
+        PluginConfiguration generationConf = new PluginConfiguration("FakeAIPGenerationTestPlugin",
+                FakeAIPGenerationTestPlugin.class.getAnnotation(Plugin.class).id());
         return new IngestProcessingChain("ingestProcessingChain_test", "the ingest processing chain description",
                 validationConf, generationConf);
     }

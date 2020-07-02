@@ -1,8 +1,18 @@
 {
     "type": "FeatureCollection",
     "metadata": {
-        "processing": "DefaultProcessingChain",
-        "session": "sampleSession"
+        "sessionOwner": "sampleSessionOwner",
+        "session": "sampleSession",
+        "ingestChain": "DefaultProcessingChain",
+        "categories": [
+            "CAT"
+        ],
+        "storages": [
+            {
+                "pluginBusinessId": "disk",
+                "targetTypes": []
+            }
+        ]
     },
     "features": [
         {
@@ -15,7 +25,11 @@
                     {
                         "dataObject": {
                             "regardsDataType": "RAWDATA",
-                            "urls": ["file:/home/test.xml"],
+                            "locations": [
+                                {
+                                    "url": "file:/home/test.xml"
+                                }
+                            ],
                             "checksum": "sdfsd455sdfdsgdfg4dgdfg",
                             "reference": false,
                             "filename": "test.xml",
@@ -31,6 +45,7 @@
                     }
                 ],
                 "pdi": {
+                    "contextInformation": {},
                     "provenanceInformation": {
                         "history": []
                     },
@@ -48,7 +63,11 @@
                     {
                         "dataObject": {
                             "regardsDataType": "RAWDATA",
-                            "urls": ["file:/home/test.xml"],
+                            "locations": [
+                                {
+                                    "url": "file:/home/test.xml"
+                                }
+                            ],
                             "checksum": "sdfsd455sdfdsgdfg4dgdfg",
                             "reference": false,
                             "filename": "test.xml",
@@ -57,6 +76,11 @@
                     }
                 ],
                 "pdi": {
+                    "contextInformation": {
+                        "categories": [
+                            "CAT"
+                        ]
+                    },
                     "provenanceInformation": {
                         "history": []
                     },
