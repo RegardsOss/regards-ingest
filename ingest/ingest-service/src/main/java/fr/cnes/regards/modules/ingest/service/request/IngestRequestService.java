@@ -452,28 +452,6 @@ public class IngestRequestService implements IIngestRequestService {
         }
     }
 
-    public void handleRemoteReferenceSuccessNew(Set<RequestInfo> requests) {
-        Set<IngestRequest> toFinilize = Sets.newHashSet();
-        for (AbstractRequest request : requestService.getRequests(requests)) {
-            IngestRequest iReq = (IngestRequest) request;
-            if (iReq.getStep() == IngestRequestStep.REMOTE_STORAGE_REQUESTED) {// Check if there is another storage request we're waiting for
-                for (RequestInfo ri : requests.stream()
-                        .filter(r -> request.getRemoteStepGroupIds().contains(r.getGroupId()))
-                        .collect(Collectors.toSet())) {
-                    aipStorageService.updateAIPsContentInfosAndLocations(iReq.getAips(), ri.getSuccessRequests());
-                    List<String> remoteStepGroupIds = updateRemoteStepGroupId(iReq, ri);
-                    if (!remoteStepGroupIds.isEmpty()) {
-                        saveRequest(iReq);
-                    } else {
-                        // The current request is over
-                        toFinilize.add(iReq);
-                    }
-                }
-            }
-        }
-        finalizeSuccessfulRequest(toFinilize, true);
-    }
-
     private void saveAndPublishErrorRequest(IngestRequest request, @Nullable String message) {
         // Mutate request
         request.addError(String.format("The ingest request with id \"%s\" and SIP provider id \"%s\" failed",
