@@ -90,7 +90,10 @@ public interface IRequestService {
      * If the request cannot be run right now, the request status will change to pending
      * @param request the request to save
      * @return
+     *
+     * @deprecated Use {@link #scheduleRequests(List)} instead to improve performances.
      */
+    @Deprecated
     AbstractRequest scheduleRequest(AbstractRequest request);
 
     /**
@@ -159,9 +162,6 @@ public interface IRequestService {
 
     /**
      * Retrieve {@link AbstractRequest}s associated to the given storage respones associated by groupId.
-     *
-     * @param requestInfos
-     * @return
      */
     public List<AbstractRequest> getRequests(Set<RequestInfo> requestInfos);
 }

@@ -26,6 +26,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
+import com.google.common.collect.Sets;
+
 import fr.cnes.regards.framework.amqp.IPublisher;
 import fr.cnes.regards.framework.amqp.ISubscriber;
 import fr.cnes.regards.framework.amqp.configuration.AmqpConstants;
@@ -153,7 +155,6 @@ public class IngestServiceTest {
      * Helper method to wait for SIP ingestion
      * @param expectedSips expected count of sips in database
      * @param timeout in ms
-     * @throws InterruptedException
      */
     public void waitForIngestion(long expectedSips, long timeout, SIPState sipState) {
         long end = System.currentTimeMillis() + timeout;
@@ -260,7 +261,6 @@ public class IngestServiceTest {
      * Helper method to wait for DB ingestion
      * @param expectedTasks expected count of task in db
      * @param timeout in ms
-     * @throws InterruptedException
      */
     public void waitForRequestReach(long expectedTasks, long timeout) {
         long end = System.currentTimeMillis() + timeout;
@@ -284,7 +284,9 @@ public class IngestServiceTest {
         long end = System.currentTimeMillis() + timeout;
         // Wait
         do {
-            long count = abstractRequestRepository.count();
+            long count = abstractRequestRepository
+                    .countByStateIn(Sets.newHashSet(InternalRequestState.BLOCKED, InternalRequestState.CREATED,
+                                                    InternalRequestState.RUNNING, InternalRequestState.TO_SCHEDULE));
             LOGGER.info("{} Current request running", count);
             if (count == 0) {
                 break;
