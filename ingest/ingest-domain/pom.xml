@@ -27,7 +27,7 @@
 	<parent>
 		<groupId>fr.cnes.regards.modules</groupId>
 		<artifactId>ingest</artifactId>
-		<version>1.2.1</version>
+		<version>1.4.0</version>
 	</parent>
 
 	<dependencies>
@@ -58,6 +58,10 @@
 		<dependency>
 			<groupId>fr.cnes.regards.framework</groupId>
 			<artifactId>gson-regards</artifactId>
+		</dependency>
+		<dependency>
+			<artifactId>notifier-dto</artifactId>
+			<groupId>fr.cnes.regards.modules.notifier</groupId>
 		</dependency>
 		<!--<dependency>
 			<groupId>fr.cnes.regards.framework</groupId>

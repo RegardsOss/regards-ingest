@@ -87,6 +87,18 @@ public class OAISDeletionRequest extends AbstractRequest {
         return aip;
     }
 
+    public void setAip(AIPEntity aip) {
+        this.aip = aip;
+    }
+
+    public void setAipToNotify(AIPEntity toNotify) {
+        config.setAipToNotify(toNotify);
+    }
+
+    public AIPEntity getAipToNotify() {
+        return config.getAipToNotify();
+    }
+
     public boolean isDeleteFiles() {
         return config.isDeleteFiles();
     }

@@ -21,6 +21,7 @@ package fr.cnes.regards.modules.ingest.service.flow;
 import java.time.OffsetDateTime;
 import java.util.List;
 
+import org.junit.Ignore;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,9 +62,10 @@ import fr.cnes.regards.modules.storage.client.test.StorageClientMock;
 @TestPropertySource(
         properties = { "spring.jpa.properties.hibernate.default_schema=sipflow", "regards.amqp.enabled=true",
                 "regards.scheduler.pool.size=4", "regards.ingest.maxBulkSize=100", "eureka.client.enabled=false",
-                "regards.aips.save-metadata.bulk.delay=100", "regards.ingest.aip.delete.bulk.delay=100" },
+                "regards.ingest.aip.delete.bulk.delay=100" },
         locations = { "classpath:application-test.properties" })
 @ActiveProfiles({ "testAmqp", "StorageClientMock" })
+@Ignore("Performance test")
 public class IngestPerformanceIT extends IngestMultitenantServiceTest {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(IngestPerformanceIT.class);
@@ -95,7 +97,6 @@ public class IngestPerformanceIT extends IngestMultitenantServiceTest {
 
     @Override
     public void doInit() {
-
         simulateApplicationReadyEvent();
         runtimeTenantResolver.forceTenant(getDefaultTenant());
     }
@@ -121,31 +122,41 @@ public class IngestPerformanceIT extends IngestMultitenantServiceTest {
 
         long start = System.currentTimeMillis();
         long existingItems = 0;
-        long maxloops = 10;
+        long maxloops = 10000;
+        int maxSessions = 1;
         // 1. Populate catalog with products
-        String session = "session";// OffsetDateTime.now().toString();
-        for (long i = 0; i < maxloops; i++) {
-            SIP sip = create(PROVIDER_PREFIX + i, null);
-            // Create event
-            publishSIPEvent(sip, "fake", session, "source", CATEGORIES);
+
+        for (int s = 0; s < maxSessions; s++) {
+            String session = "session" + s;// OffsetDateTime.now().toString();
+            for (long i = 0; i < maxloops; i++) {
+                SIP sip = create(PROVIDER_PREFIX + i, null);
+                // Create event
+                publishSIPEvent(sip, "fake", session, "source", CATEGORIES);
+            }
+            //            try {
+            //                // FIXME remove only for specific concurrent tests
+            //                Thread.sleep(30_000);
+            //            } catch (InterruptedException e) {
+            //                LOGGER.error(e.getMessage(), e);
+            //            }
         }
 
         // 2. Wait
-        ingestServiceTest.waitForIngestion(maxloops, maxloops * 10000, SIPState.STORED);
+        ingestServiceTest.waitForIngestion(maxloops * maxSessions, maxloops * maxSessions * 10000, SIPState.STORED);
 
-        LOGGER.info("END TEST : {} SIP(s) INGESTED in {} ms", maxloops + existingItems,
+        LOGGER.info("END TEST : {} SIP(s) INGESTED in {} ms", (maxloops * maxSessions) + existingItems,
                     System.currentTimeMillis() - start);
 
         sessionNotifier.debugSession();
 
-        // 3. Delete products
-        OAISDeletionPayloadDto dto = OAISDeletionPayloadDto.build(SessionDeletionMode.BY_STATE)
-                .withProviderId(PROVIDER_PREFIX + "0");
-        deletionService.registerOAISDeletionCreator(dto);
-
-        // 4. Wait
-        ingestServiceTest.waitForIngestion(1, 100000, SIPState.DELETED);
-        sessionNotifier.debugSession();
+        //        // 3. Delete products
+        //        OAISDeletionPayloadDto dto = OAISDeletionPayloadDto.build(SessionDeletionMode.BY_STATE)
+        //                .withProviderId(PROVIDER_PREFIX + "0");
+        //        deletionService.registerOAISDeletionCreator(dto);
+        //
+        //        // 4. Wait
+        //        ingestServiceTest.waitForIngestion(1, 100000, SIPState.DELETED);
+        //        sessionNotifier.debugSession();
     }
 
     /**

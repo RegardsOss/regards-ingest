@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -36,6 +37,7 @@ import fr.cnes.regards.modules.ingest.domain.aip.AIPEntity;
 import fr.cnes.regards.modules.ingest.domain.aip.AIPEntityLight;
 import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionRequest;
 import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
+import fr.cnes.regards.modules.ingest.domain.sip.VersioningMode;
 import fr.cnes.regards.modules.ingest.dto.aip.AIP;
 import fr.cnes.regards.modules.ingest.dto.aip.AbstractSearchAIPsParameters;
 import fr.cnes.regards.modules.ingest.dto.aip.SearchFacetsAIPsParameters;
@@ -74,6 +76,11 @@ public interface IAIPService {
     void processDeletion(String sipId, boolean deleteIrrevocably);
 
     /**
+     * Update last flag for specified entity
+     */
+    AIPEntity updateLastFlag(AIPEntity sip, boolean last);
+
+    /**
      * Save AIP
      */
     AIPEntity save(AIPEntity entity);
@@ -97,12 +104,6 @@ public interface IAIPService {
     Page<AIPEntity> findByFilters(AbstractSearchAIPsParameters<?> filters, Pageable pageable);
 
     Page<AIPEntityLight> findLightByFilters(AbstractSearchAIPsParameters<?> filters, Pageable pageable);
-
-    /**
-     * Compute the checksum of the AIP and save it
-     * @param aipEntity
-     */
-    void computeAndSaveChecksum(AIPEntity aipEntity) throws ModuleException;
 
     /**
      * Retrieve all tags used by a set of AIPS matching provided filters
@@ -144,4 +145,8 @@ public interface IAIPService {
      */
     Collection<AIPEntity> findByAipIds(Collection<String> aipIds);
 
+    Set<AIPEntity> findLastByProviderIds(Collection<String> providerIds);
+
+    void handleVersioning(AIPEntity aipEntity, VersioningMode versioningMode,
+            Map<String, AIPEntity> currentLatestPerProviderId);
 }

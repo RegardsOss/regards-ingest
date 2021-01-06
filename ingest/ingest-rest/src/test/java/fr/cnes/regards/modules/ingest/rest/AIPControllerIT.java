@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.StringJoiner;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
@@ -42,6 +43,7 @@ import org.springframework.http.MediaType;
 import org.springframework.restdocs.payload.FieldDescriptor;
 import org.springframework.restdocs.snippet.Attributes;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
@@ -49,6 +51,7 @@ import org.springframework.test.context.TestPropertySource;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import fr.cnes.regards.framework.amqp.event.Target;
 import fr.cnes.regards.framework.multitenant.IRuntimeTenantResolver;
 import fr.cnes.regards.framework.test.integration.AbstractRegardsTransactionalIT;
 import fr.cnes.regards.framework.test.integration.ConstrainedFields;
@@ -72,6 +75,8 @@ import fr.cnes.regards.modules.ingest.dto.request.update.AIPUpdateParametersDto;
 import fr.cnes.regards.modules.ingest.dto.sip.IngestMetadataDto;
 import fr.cnes.regards.modules.ingest.dto.sip.SIP;
 import fr.cnes.regards.modules.ingest.service.aip.AIPStorageService;
+import fr.cnes.regards.modules.ingest.service.flow.IngestRequestFlowHandler;
+import fr.cnes.regards.modules.ingest.service.flow.StorageResponseFlowHandler;
 import fr.cnes.regards.modules.storage.client.test.StorageClientMock;
 import fr.cnes.regards.modules.test.IngestServiceTest;
 
@@ -125,6 +130,8 @@ public class AIPControllerIT extends AbstractRegardsTransactionalIT {
         storageClient.setBehavior(true, true);
         // Clean everything
         ingestServiceTest.init();
+        ingestServiceTest.cleanAMQPQueues(IngestRequestFlowHandler.class, Target.ONE_PER_MICROSERVICE_TYPE);
+
         // resend the event of AppReady to reinit default data
         springPublisher.publishEvent(new ApplicationReadyEvent(Mockito.mock(SpringApplication.class), null, null));
     }
@@ -453,6 +460,14 @@ public class AIPControllerIT extends AbstractRegardsTransactionalIT {
                         .value("Optional. If you add the % character, we will use the like operator to match provider id")));
 
         params.add(constrainedFields
+                .withPath(rootPath + AIPController.REQUEST_PARAM_PROVIDER_ID, AIPController.REQUEST_PARAM_PROVIDER_ID,
+                          "A list of provider ids filter")
+                .optional().type(JSON_STRING_TYPE)
+                .attributes(Attributes.key(RequestBuilderCustomizer.PARAM_TYPE).value(JSON_STRING_TYPE))
+                .attributes(Attributes.key(RequestBuilderCustomizer.PARAM_CONSTRAINTS)
+                        .value("Optional. If you add the % character, we will use the like operator to match provider id")));
+
+        params.add(constrainedFields
                 .withPath(rootPath + AIPController.REQUEST_PARAM_SESSION_OWNER,
                           AIPController.REQUEST_PARAM_SESSION_OWNER, "Session owner filter")
                 .optional().type(JSON_STRING_TYPE)
@@ -487,11 +502,8 @@ public class AIPControllerIT extends AbstractRegardsTransactionalIT {
                 .attributes(Attributes.key(RequestBuilderCustomizer.PARAM_TYPE).value(List.class.getSimpleName()))
                 .attributes(Attributes.key(RequestBuilderCustomizer.PARAM_CONSTRAINTS).value("Optional.")));
 
-        params.add(constrainedFields
-                .withPath(rootPath + AIPController.REQUEST_PARAM_AIP_IDS, AIPController.REQUEST_PARAM_AIP_IDS,
-                          "A list of aip ids")
-                .optional().type(List.class.getSimpleName())
-                .attributes(Attributes.key(RequestBuilderCustomizer.PARAM_TYPE).value(List.class.getSimpleName()))
+        params.add(constrainedFields.withPath(rootPath + "last", "last", "is it the last version?").optional()
+                .type(JSON_BOOLEAN_TYPE)
                 .attributes(Attributes.key(RequestBuilderCustomizer.PARAM_CONSTRAINTS).value("Optional.")));
 
         params.add(constrainedFields
@@ -547,4 +559,8 @@ public class AIPControllerIT extends AbstractRegardsTransactionalIT {
         return fields;
     }
 
+    @After
+    public void doAfter() {
+        ingestServiceTest.init();
+    }
 }

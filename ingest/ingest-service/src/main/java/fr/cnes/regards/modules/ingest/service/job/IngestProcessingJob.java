@@ -19,17 +19,13 @@
 package fr.cnes.regards.modules.ingest.service.job;
 
 import java.lang.reflect.Type;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.StringJoiner;
+import java.util.*;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 
+import com.google.common.collect.Sets;
 import com.google.gson.reflect.TypeToken;
-
 import fr.cnes.regards.framework.modules.jobs.domain.AbstractJob;
 import fr.cnes.regards.framework.modules.jobs.domain.JobParameter;
 import fr.cnes.regards.framework.modules.jobs.domain.exception.JobParameterInvalidException;
@@ -42,6 +38,8 @@ import fr.cnes.regards.framework.security.role.DefaultRole;
 import fr.cnes.regards.modules.ingest.dao.IIngestProcessingChainRepository;
 import fr.cnes.regards.modules.ingest.domain.aip.AIPEntity;
 import fr.cnes.regards.modules.ingest.domain.chain.IngestProcessingChain;
+import fr.cnes.regards.modules.ingest.domain.request.AbstractRequest;
+import fr.cnes.regards.modules.ingest.domain.request.InternalRequestState;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequest;
 import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
 import fr.cnes.regards.modules.ingest.dto.aip.AIP;
@@ -49,10 +47,10 @@ import fr.cnes.regards.modules.ingest.dto.sip.SIP;
 import fr.cnes.regards.modules.ingest.service.chain.step.GenerationStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.InternalFinalStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.InternalInitialStep;
-import fr.cnes.regards.modules.ingest.service.chain.step.PostprocessingStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.PreprocessingStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.TaggingStep;
 import fr.cnes.regards.modules.ingest.service.chain.step.ValidationStep;
+import fr.cnes.regards.modules.ingest.service.notification.IAIPNotificationService;
 import fr.cnes.regards.modules.ingest.service.request.IIngestRequestService;
 
 /**
@@ -79,6 +77,9 @@ public class IngestProcessingJob extends AbstractJob<Void> {
 
     @Autowired
     private INotificationClient notificationClient;
+
+    @Autowired
+    private IAIPNotificationService aipNotificationService;
 
     private IngestProcessingChain ingestChain;
 
@@ -143,9 +144,7 @@ public class IngestProcessingJob extends AbstractJob<Void> {
         // Step 4 : optional AIP tagging
         IProcessingStep<List<AIP>, Void> taggingStep = new TaggingStep(this, ingestChain);
         beanFactory.autowireBean(taggingStep);
-        // Step 5 : optional postprocessing
-        IProcessingStep<SIP, Void> postprocessingStep = new PostprocessingStep(this, ingestChain);
-        beanFactory.autowireBean(postprocessingStep);
+        /** Step 5 : optional postprocessing has to be run after storage ends. See {@link IngestPostProcessingJob}.  */
 
         // Internal final step
         IProcessingStep<List<AIP>, List<AIPEntity>> finalStep = new InternalFinalStep(this, ingestChain);
@@ -154,6 +153,9 @@ public class IngestProcessingJob extends AbstractJob<Void> {
         long start = System.currentTimeMillis();
         int sipIngested = 0;
         int sipInError = 0;
+
+        // To notify again ingest request with NOTIFICATION_ERROR step
+        Set<AbstractRequest> notificationRequests = Sets.newHashSet();
 
         for (IngestRequest request : requests) {
             //FIXME add logic to handle interruption
@@ -183,8 +185,6 @@ public class IngestProcessingJob extends AbstractJob<Void> {
                         aips = generationStep.execute(currentEntity);
                         // Step 4 : optional AIP tagging
                         taggingStep.execute(aips);
-                        // Step 5 : optional postprocessing
-                        postprocessingStep.execute(sip);
                         // Internal finalization step (no plugin involved)
                         // Do all persistence actions in this step
                         finalStep.execute(aips);
@@ -198,35 +198,58 @@ public class IngestProcessingJob extends AbstractJob<Void> {
                         ingestRequestService.requestRemoteStorage(request);
 
                         break;
+                    case REMOTE_NOTIFICATION_ERROR:
+                        // add request to list of requests to be notified again
+                        notificationRequests.add(request);
+                        break;
                     default:
                         logger.debug("{}SIP \"{}\" ingestion has been retried and nothing had to be done in local",
-                                     INFO_TAB, request.getSip().getId());
+                                     INFO_TAB,
+                                     request.getSip().getId());
                         break;
                 }
                 sipIngested++;
-                logger.debug("{}SIP \"{}\" ingested in {} ms", INFO_TAB, request.getSip().getId(),
+                logger.debug("{}SIP \"{}\" ingested in {} ms",
+                             INFO_TAB,
+                             request.getSip().getId(),
                              System.currentTimeMillis() - start2);
 
             } catch (ProcessingStepException e) {
-                logger.error("SIP \"{}\" ingestion error", request.getSip().getId());
-                sipInError++;
-                String msg = String.format("Error while ingesting SIP \"%s\" in request \"%s\"",
-                                           request.getSip().getId(), request.getRequestId());
-                notifMsg.add(msg);
-                logger.error(msg);
-                logger.error("Ingestion step error", e);
-                // Continue with following SIPs
+                if (request.getState() != InternalRequestState.WAITING_VERSIONING_MODE
+                        && request.getState() != InternalRequestState.IGNORED) {
+                    logger.error("SIP \"{}\" ingestion error", request.getSip().getId());
+                    sipInError++;
+                    String msg = String.format("Error while ingesting SIP \"%s\" in request \"%s\"",
+                                               request.getSip().getId(),
+                                               request.getRequestId());
+                    notifMsg.add(msg);
+                    logger.error(msg);
+                    logger.error("Ingestion step error", e);
+                    // Continue with following SIPs
+                } else {
+                    logger.debug(e.getMessage(), e);
+                }
             }
         }
 
         // notify if errors occurred
         if (sipInError > 0) {
-            notificationClient.notify(notifMsg.toString(), "Error occurred during SIPs Ingestion.",
-                                      NotificationLevel.INFO, DefaultRole.ADMIN);
-            logger.error("{}{} SIP(s) INGESTED and {} in ERROR in {} ms", INFO_TAB, sipIngested, sipInError,
+            notificationClient.notify(notifMsg.toString(),
+                                      "Error occurred during SIPs Ingestion.",
+                                      NotificationLevel.INFO,
+                                      DefaultRole.ADMIN);
+            logger.error("{}{} SIP(s) INGESTED and {} in ERROR in {} ms",
+                         INFO_TAB,
+                         sipIngested,
+                         sipInError,
                          System.currentTimeMillis() - start);
         } else {
             logger.info("{}{} SIP(s) INGESTED in {} ms", INFO_TAB, sipIngested, System.currentTimeMillis() - start);
+        }
+
+        // if there are requests to be notified again, send them to notifier
+        if(!notificationRequests.isEmpty()) {
+            aipNotificationService.sendRequestsToNotifier(notificationRequests);
         }
     }
 

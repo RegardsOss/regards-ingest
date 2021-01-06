@@ -36,7 +36,6 @@ import fr.cnes.regards.framework.oais.urn.OAISIdentifier;
 import fr.cnes.regards.framework.oais.urn.OaisUniformResourceName;
 import fr.cnes.regards.framework.urn.EntityType;
 import fr.cnes.regards.modules.ingest.dao.IAIPRepository;
-import fr.cnes.regards.modules.ingest.dao.IAIPStoreMetaDataRepository;
 import fr.cnes.regards.modules.ingest.dao.IAIPUpdateRequestRepository;
 import fr.cnes.regards.modules.ingest.dao.IAIPUpdatesCreatorRepository;
 import fr.cnes.regards.modules.ingest.dao.IAbstractRequestRepository;
@@ -53,7 +52,6 @@ import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionCreato
 import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionRequest;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequest;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequestStep;
-import fr.cnes.regards.modules.ingest.domain.request.manifest.AIPStoreMetaDataRequest;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdateRequest;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdatesCreatorRequest;
 import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
@@ -75,9 +73,9 @@ import fr.cnes.regards.modules.ingest.service.request.IRequestService;
  */
 @TestPropertySource(properties = { "spring.jpa.properties.hibernate.default_schema=request_deletion_job",
         "regards.amqp.enabled=true", "regards.ingest.aip.update.bulk.delay=100000000", "eureka.client.enabled=false",
-        "spring.jpa.show-sql=false", "regards.aips.save-metadata.bulk.delay=100",
+        "spring.jpa.show-sql=false",
         "regards.ingest.aip.delete.bulk.delay=100" }, locations = { "classpath:application-test.properties" })
-@ActiveProfiles(value = { "testAmqp" })
+@ActiveProfiles(value = { "testAmqp" , "noschedule"})
 public class RequestDeletionJobIT extends IngestMultitenantServiceTest {
 
     private static final List<String> CATEGORIES_0 = Lists.newArrayList("CATEGORY");
@@ -96,9 +94,6 @@ public class RequestDeletionJobIT extends IngestMultitenantServiceTest {
 
     @Autowired
     private ISIPRepository sipRepository;
-
-    @Autowired
-    private IAIPStoreMetaDataRepository storeMetaDataRepository;
 
     @Autowired
     private IAIPUpdatesCreatorRepository aipUpdatesCreatorRepository;
@@ -124,13 +119,6 @@ public class RequestDeletionJobIT extends IngestMultitenantServiceTest {
     private List<AIPEntity> aips;
 
     private IngestMetadataDto mtd;
-
-    @Override
-    public void doInit() {
-        simulateApplicationReadyEvent();
-        // Re-set tenant because above simulation clear it!
-        runtimeTenantResolver.forceTenant(getDefaultTenant());
-    }
 
     public void initData() {
         LOGGER.info("=========================> BEGIN INIT DATA FOR TESTS <=====================");
@@ -173,10 +161,6 @@ public class RequestDeletionJobIT extends IngestMultitenantServiceTest {
         aips = aipRepository.findAll();
 
         // Create an event of each type and ensure they are not consummed by jobs / queue / whatever
-        AIPStoreMetaDataRequest storeMetaDataRequest = AIPStoreMetaDataRequest.build(aips.get(0), null, true, true);
-        storeMetaDataRequest.setState(InternalRequestState.ERROR);
-        storeMetaDataRepository.save(storeMetaDataRequest);
-
         AIPUpdatesCreatorRequest updateCreatorRequest = AIPUpdatesCreatorRequest.build(AIPUpdateParametersDto
                 .build(SearchAIPsParameters.build().withSession(SESSION_0).withSessionOwner(SESSION_OWNER_0)));
         updateCreatorRequest.setState(InternalRequestState.ERROR);
@@ -189,7 +173,7 @@ public class RequestDeletionJobIT extends IngestMultitenantServiceTest {
         aipUpdateRequestRepository.saveAll(updateRequest);
 
         ingestRequestRepository
-                .save(IngestRequest.build(mapper.dtoToMetadata(mtd), InternalRequestState.ERROR,
+                .save(IngestRequest.build(null, mapper.dtoToMetadata(mtd), InternalRequestState.ERROR,
                                           IngestRequestStep.REMOTE_STORAGE_ERROR, aips.get(0).getSip().getSip()));
         OAISDeletionCreatorRequest deletionRequest = new OAISDeletionCreatorRequest();
         deletionRequest.setCreationDate(OffsetDateTime.now());
@@ -235,7 +219,7 @@ public class RequestDeletionJobIT extends IngestMultitenantServiceTest {
     @Test
     public void testDeleteJob() {
         initData();
-        Assert.assertEquals("Something went wrong while creating requests", 6, abstractRequestRepository.count());
+        Assert.assertEquals("Something went wrong while creating requests", 5, abstractRequestRepository.count());
         requestService.scheduleRequestDeletionJob(SearchRequestsParameters.build()
                 .withRequestType(RequestTypeEnum.AIP_UPDATES_CREATOR));
         waitForRequestReach(5, 20_000);

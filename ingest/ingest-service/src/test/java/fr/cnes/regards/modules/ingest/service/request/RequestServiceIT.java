@@ -42,7 +42,6 @@ import fr.cnes.regards.framework.oais.urn.OAISIdentifier;
 import fr.cnes.regards.framework.oais.urn.OaisUniformResourceName;
 import fr.cnes.regards.framework.urn.EntityType;
 import fr.cnes.regards.modules.ingest.dao.IAIPRepository;
-import fr.cnes.regards.modules.ingest.dao.IAIPStoreMetaDataRepository;
 import fr.cnes.regards.modules.ingest.dao.IAIPUpdateRequestRepository;
 import fr.cnes.regards.modules.ingest.dao.IAIPUpdatesCreatorRepository;
 import fr.cnes.regards.modules.ingest.dao.IAbstractRequestRepository;
@@ -59,7 +58,6 @@ import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionCreato
 import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionRequest;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequest;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequestStep;
-import fr.cnes.regards.modules.ingest.domain.request.manifest.AIPStoreMetaDataRequest;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdateRequest;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdatesCreatorRequest;
 import fr.cnes.regards.modules.ingest.domain.sip.IngestMetadata;
@@ -83,10 +81,10 @@ import fr.cnes.regards.modules.storage.client.test.StorageClientMock;
  * @author Léo Mieulet
  */
 @TestPropertySource(properties = { "spring.jpa.properties.hibernate.default_schema=request_it",
-        "regards.aips.save-metadata.bulk.delay=20000000", "regards.amqp.enabled=true", "eureka.client.enabled=false",
+        "regards.amqp.enabled=true", "eureka.client.enabled=false",
         "regards.scheduler.pool.size=4", "regards.ingest.maxBulkSize=100", "spring.jpa.show-sql=true" },
         locations = { "classpath:application-test.properties" })
-@ActiveProfiles(value = { "testAmqp", "StorageClientMock" })
+@ActiveProfiles(value = { "testAmqp", "StorageClientMock","noschedule" })
 public class RequestServiceIT extends IngestMultitenantServiceTest {
 
     private static final List<String> CATEGORIES_0 = Lists.newArrayList("CATEGORY");
@@ -125,9 +123,6 @@ public class RequestServiceIT extends IngestMultitenantServiceTest {
     private ISIPRepository sipRepository;
 
     @Autowired
-    private IAIPStoreMetaDataRepository storeMetaDataRepository;
-
-    @Autowired
     private IAIPUpdatesCreatorRepository aipUpdatesCreatorRepository;
 
     @Autowired
@@ -153,12 +148,6 @@ public class RequestServiceIT extends IngestMultitenantServiceTest {
 
     @Autowired
     private StorageClientMock storageClient;
-
-    @Override
-    public void doInit() {
-        simulateApplicationReadyEvent();
-        runtimeTenantResolver.forceTenant(getDefaultTenant());
-    }
 
     @Override
     protected void doAfter() throws Exception {
@@ -187,10 +176,6 @@ public class RequestServiceIT extends IngestMultitenantServiceTest {
         List<AIPEntity> aips = aipRepository.findAll();
 
         // Create an event of each type and ensure they are not consummed by jobs / queue / whatever
-        AIPStoreMetaDataRequest storeMetaDataRequest = AIPStoreMetaDataRequest.build(aips.get(0), null, true, true);
-        storeMetaDataRequest.setState(InternalRequestState.ERROR);
-        storeMetaDataRepository.save(storeMetaDataRequest);
-
         AIPUpdatesCreatorRequest updateCreatorRequest = AIPUpdatesCreatorRequest
                 .build(AIPUpdateParametersDto.build(SearchAIPsParameters.build().withSession(SESSION_0)));
         updateCreatorRequest.setState(InternalRequestState.ERROR);
@@ -203,7 +188,7 @@ public class RequestServiceIT extends IngestMultitenantServiceTest {
         aipUpdateRequestRepository.saveAll(updateRequest);
 
         ingestRequestRepository
-                .save(IngestRequest.build(mapper.dtoToMetadata(mtd), InternalRequestState.ERROR,
+                .save(IngestRequest.build(null, mapper.dtoToMetadata(mtd), InternalRequestState.ERROR,
                                           IngestRequestStep.REMOTE_STORAGE_ERROR, aips.get(0).getSip().getSip()));
         OAISDeletionCreatorRequest deletionRequest = new OAISDeletionCreatorRequest();
         deletionRequest.setCreationDate(OffsetDateTime.now());
@@ -225,7 +210,7 @@ public class RequestServiceIT extends IngestMultitenantServiceTest {
         Page<RequestDto> requests = requestService
                 .findRequestDtos(SearchRequestsParameters.build().withState(InternalRequestState.ERROR), pr);
         LOGGER.info("=========================> END SEARCH ALL IN ERROR <=====================");
-        Assert.assertEquals(6, requests.getTotalElements());
+        Assert.assertEquals(5, requests.getTotalElements());
 
         LOGGER.info("=========================> BEGIN SEARCH INGEST IN ERROR <=====================");
         requests = requestService.findRequestDtos(SearchRequestsParameters.build()
@@ -249,12 +234,6 @@ public class RequestServiceIT extends IngestMultitenantServiceTest {
         requests = requestService.findRequestDtos(SearchRequestsParameters.build()
                 .withRequestType(RequestTypeEnum.OAIS_DELETION).withState(InternalRequestState.ERROR), pr);
         LOGGER.info("=========================> END SEARCH STORAGE DELETION IN ERROR <=====================");
-        Assert.assertEquals(1, requests.getTotalElements());
-
-        LOGGER.info("=========================> BEGIN SEARCH STORE META IN ERROR <=====================");
-        requests = requestService.findRequestDtos(SearchRequestsParameters.build()
-                .withRequestType(RequestTypeEnum.STORE_METADATA).withState(InternalRequestState.ERROR), pr);
-        LOGGER.info("=========================> END SEARCH STORE META IN ERROR <=====================");
         Assert.assertEquals(1, requests.getTotalElements());
 
         LOGGER.info("=========================> BEGIN SEARCH UPDATE IN ERROR <=====================");
@@ -297,16 +276,13 @@ public class RequestServiceIT extends IngestMultitenantServiceTest {
 
         aipEntity2 = aipRepository.save(aipEntity2);
 
-        IngestRequest ingestRequest = IngestRequest.build(IngestMetadata
-                .build("SESSION_OWNER", "SESSION", "ingestChain", new HashSet<>(), StorageMetadata.build("RAS")),
-                                                          InternalRequestState.ERROR, IngestRequestStep.LOCAL_SCHEDULED,
-                                                          aipEntity.getSip().getSip());
+        IngestRequest ingestRequest = IngestRequest
+                .build(null,
+                       IngestMetadata.build("SESSION_OWNER", "SESSION", "ingestChain", new HashSet<>(),
+                                            StorageMetadata.build("RAS")),
+                       InternalRequestState.ERROR, IngestRequestStep.LOCAL_SCHEDULED, aipEntity.getSip().getSip());
         ingestRequest.setAips(Lists.newArrayList(aipEntity));
         abstractRequestRepository.save(ingestRequest);
-
-        AIPStoreMetaDataRequest storeMetaDataRequest = AIPStoreMetaDataRequest.build(aipEntity2, null, false, false);
-        storeMetaDataRequest.setState(InternalRequestState.ERROR);
-        abstractRequestRepository.save(storeMetaDataRequest);
 
         List<AIPUpdateRequest> updateRequest = AIPUpdateRequest.build(aipEntity2, AIPUpdateParametersDto
                 .build(SearchAIPsParameters.build()).withAddTags(Lists.newArrayList("TEST")), false);
@@ -318,7 +294,7 @@ public class RequestServiceIT extends IngestMultitenantServiceTest {
     @Test
     public void testDeleteRequestByAip() {
         Set<AIPEntity> aipEntities = makeRequests();
-        Assert.assertEquals(3, abstractRequestRepository.count());
+        Assert.assertEquals(2, abstractRequestRepository.count());
         // Delete all requests associated to AIP
         requestService.deleteAllByAip(aipEntities);
         Assert.assertEquals(0, abstractRequestRepository.count());

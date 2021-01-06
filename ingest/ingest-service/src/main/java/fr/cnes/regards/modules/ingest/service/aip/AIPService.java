@@ -30,6 +30,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -65,16 +66,22 @@ import fr.cnes.regards.modules.ingest.dao.AIPQueryGenerator;
 import fr.cnes.regards.modules.ingest.dao.IAIPLightRepository;
 import fr.cnes.regards.modules.ingest.dao.IAIPRepository;
 import fr.cnes.regards.modules.ingest.dao.ICustomAIPRepository;
+import fr.cnes.regards.modules.ingest.dao.ILastAIPRepository;
 import fr.cnes.regards.modules.ingest.domain.aip.AIPEntity;
 import fr.cnes.regards.modules.ingest.domain.aip.AIPEntityLight;
 import fr.cnes.regards.modules.ingest.domain.aip.AIPState;
+import fr.cnes.regards.modules.ingest.domain.aip.LastAIPEntity;
 import fr.cnes.regards.modules.ingest.domain.request.InternalRequestState;
 import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionRequest;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdatesCreatorRequest;
 import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
+import fr.cnes.regards.modules.ingest.domain.sip.VersioningMode;
 import fr.cnes.regards.modules.ingest.dto.aip.AIP;
 import fr.cnes.regards.modules.ingest.dto.aip.AbstractSearchAIPsParameters;
 import fr.cnes.regards.modules.ingest.dto.aip.SearchFacetsAIPsParameters;
+import fr.cnes.regards.modules.ingest.dto.request.OAISDeletionPayloadDto;
+import fr.cnes.regards.modules.ingest.dto.request.SearchSelectionMode;
+import fr.cnes.regards.modules.ingest.dto.request.SessionDeletionMode;
 import fr.cnes.regards.modules.ingest.dto.request.update.AIPUpdateParametersDto;
 import fr.cnes.regards.modules.ingest.service.request.IOAISDeletionService;
 import fr.cnes.regards.modules.ingest.service.request.IRequestService;
@@ -95,9 +102,9 @@ import fr.cnes.regards.modules.storage.domain.dto.request.FileDeletionRequestDTO
 @MultitenantTransactional
 public class AIPService implements IAIPService {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(AIPService.class);
-
     public static final String MD5_ALGORITHM = "MD5";
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(AIPService.class);
 
     private static final String JSON_INDENT = "  ";
 
@@ -106,6 +113,9 @@ public class AIPService implements IAIPService {
 
     @Autowired
     private IAIPRepository aipRepository;
+
+    @Autowired
+    private ILastAIPRepository lastAipRepository;
 
     @Autowired
     private IAIPLightRepository aipLigthRepository;
@@ -138,6 +148,22 @@ public class AIPService implements IAIPService {
     }
 
     @Override
+    public AIPEntity updateLastFlag(AIPEntity aip, boolean last) {
+        aip.setLast(last);
+        save(aip); // Set id if not already set
+        if (aip.isLast()) {
+            lastAipRepository.save(new LastAIPEntity(aip.getId(), aip.getProviderId()));
+        } else {
+            lastAipRepository.deleteByAipId(aip.getId());
+        }
+        return aip;
+    }
+
+    private void removeLastFlag(AIPEntity aip) {
+        lastAipRepository.deleteByAipId(aip.getId());
+    }
+
+    @Override
     public AIPEntity save(AIPEntity entity) {
         entity.setLastUpdate(OffsetDateTime.now());
         return aipRepository.save(entity);
@@ -159,6 +185,53 @@ public class AIPService implements IAIPService {
     @Override
     public Collection<AIPEntity> findByAipIds(Collection<String> aipIds) {
         return aipRepository.findByAipIdIn(aipIds);
+    }
+
+    @Override
+    public Set<AIPEntity> findLastByProviderIds(Collection<String> providerIds) {
+        return aipRepository.findByProviderIdInAndLast(providerIds, true);
+    }
+
+    @Override
+    public void handleVersioning(AIPEntity aipEntity, VersioningMode versioningMode,
+            Map<String, AIPEntity> lastVersions) {
+
+        // lets get the old last version
+        AIPEntity dbLatest = lastVersions.get(aipEntity.getProviderId());
+
+        if (dbLatest == null) {
+            //then this is the first version (according to our code, not necessarily V1) ingested
+            updateLastFlag(aipEntity, true);
+            lastVersions.put(aipEntity.getProviderId(), aipEntity);
+        } else {
+            if (dbLatest.getVersion() < aipEntity.getVersion()) {
+                // Switch last entity
+                updateLastFlag(dbLatest, false);
+                updateLastFlag(aipEntity, true);
+                lastVersions.put(aipEntity.getProviderId(), aipEntity);
+            } else {
+                updateLastFlag(aipEntity, false);
+            }
+
+            sessionNotifier.incrementNewProductVersion(aipEntity);
+            // In case versioning mode is IGNORE or MANUAL, we do not even reach this point in code
+            // In case versioning mode is INC_VERSION, then we have nothing particular to do
+            // But in case it is REPLACE...
+            if (versioningMode == VersioningMode.REPLACE) {
+                sessionNotifier.incrementProductReplace(aipEntity);
+                if (aipEntity.isLast()) {
+                    // we are the last aip so we need to delete the old latest
+                    oaisDeletionRequestService
+                            .registerOAISDeletionCreator(OAISDeletionPayloadDto.build(SessionDeletionMode.BY_STATE)
+                                    .withAipId(dbLatest.getAipId()).withSelectionMode(SearchSelectionMode.INCLUDE));
+                } else {
+                    //we are not the last aip but we have been added at the same time than the latest, so we need to be removed
+                    oaisDeletionRequestService
+                            .registerOAISDeletionCreator(OAISDeletionPayloadDto.build(SessionDeletionMode.BY_STATE)
+                                    .withAipId(aipEntity.getAipId()).withSelectionMode(SearchSelectionMode.INCLUDE));
+                }
+            }
+        }
     }
 
     @Override
@@ -244,10 +317,6 @@ public class AIPService implements IAIPService {
                 OAISDataObject dataObject = ci.getDataObject();
                 filesToDelete.addAll(getFileDeletionEvents(aipId, dataObject.getChecksum(), dataObject.getLocations()));
             }
-
-            // Add the AIP itself (on each storage) to the file list to remove
-            filesToDelete
-                    .addAll(getFileDeletionEvents(aipId, aipEntity.getChecksum(), aipEntity.getManifestLocations()));
         }
 
         // Publish event to delete AIP files and AIPs itself
@@ -274,6 +343,7 @@ public class AIPService implements IAIPService {
         return events;
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void registerUpdatesCreator(AIPUpdateParametersDto params) {
         AIPUpdatesCreatorRequest request = AIPUpdatesCreatorRequest.build(params);
@@ -288,10 +358,11 @@ public class AIPService implements IAIPService {
         // Retrieve all AIP relative to this SIP id
         Set<AIPEntity> aipsRelatedToSip = aipRepository.findBySipSipId(sipId);
         if (!aipsRelatedToSip.isEmpty()) {
-            aipsRelatedToSip.forEach(entity -> {
-                sessionNotifier.productDeleted(entity.getSessionOwner(), entity.getSession(), aipsRelatedToSip);
-                entity.setState(AIPState.DELETED);
-            });
+            // we can find any aip from one sip as they are generated at same time so they all have the same session information
+            AIPEntity aipForSessionInfo = aipsRelatedToSip.stream().findAny().get();
+            sessionNotifier.productDeleted(aipForSessionInfo.getSessionOwner(), aipForSessionInfo.getSession(),
+                                           aipsRelatedToSip);
+            aipsRelatedToSip.forEach(entity -> entity.setState(AIPState.DELETED));
             if (deleteIrrevocably) {
                 requestService.deleteAllByAip(aipsRelatedToSip);
                 // Delete them
@@ -300,6 +371,8 @@ public class AIPService implements IAIPService {
                 // Mark the AIP as deleted
                 aipRepository.saveAll(aipsRelatedToSip);
             }
+            // Remove last flag entry
+            aipsRelatedToSip.forEach(aip -> removeLastFlag(aip));
             // Send notification to data mangement for feature deleted
             aipsRelatedToSip.forEach(aip -> publisher.publish(FeatureEvent.buildFeatureDeleted(aip.getAipId())));
         }
@@ -321,18 +394,5 @@ public class AIPService implements IAIPService {
             aip.setLastUpdate(OffsetDateTime.now());
         }
         return aipRepository.saveAll(entities);
-    }
-
-    @Override
-    public void computeAndSaveChecksum(AIPEntity aipEntity) throws ModuleException {
-        try {
-            String checksum = calculateChecksum(aipEntity.getAip());
-            aipEntity.setChecksum(checksum);
-            save(aipEntity);
-        } catch (IOException | NoSuchAlgorithmException e) {
-            String message = String.format("Failed to compute AIP checksum for AIP %s", aipEntity.getId());
-            LOGGER.error(message, e);
-            throw new ModuleException(message, e);
-        }
     }
 }

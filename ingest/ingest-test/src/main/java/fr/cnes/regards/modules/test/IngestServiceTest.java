@@ -18,6 +18,10 @@
  */
 package fr.cnes.regards.modules.test;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
 import org.junit.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +45,8 @@ import fr.cnes.regards.modules.ingest.dao.IAIPRepository;
 import fr.cnes.regards.modules.ingest.dao.IAbstractRequestRepository;
 import fr.cnes.regards.modules.ingest.dao.IIngestProcessingChainRepository;
 import fr.cnes.regards.modules.ingest.dao.IIngestRequestRepository;
+import fr.cnes.regards.modules.ingest.dao.ILastAIPRepository;
+import fr.cnes.regards.modules.ingest.dao.ILastSIPRepository;
 import fr.cnes.regards.modules.ingest.dao.ISIPRepository;
 import fr.cnes.regards.modules.ingest.domain.aip.AIPState;
 import fr.cnes.regards.modules.ingest.domain.request.InternalRequestState;
@@ -56,6 +62,8 @@ import fr.cnes.regards.modules.storage.domain.event.FileRequestsGroupEvent;
 public class IngestServiceTest {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(IngestServiceTest.class);
+    public static final String NEW_SIP_S_IN_DATABASE_TEMPLATE = "{} new SIP(s) {} in database";
+    public static final String ALL_STATUS = "ALL_STATUS";
 
     @Autowired
     protected IIngestRequestRepository ingestRequestRepository;
@@ -64,7 +72,13 @@ public class IngestServiceTest {
     protected ISIPRepository sipRepository;
 
     @Autowired
+    protected ILastSIPRepository lastSipRepository;
+
+    @Autowired
     protected IAIPRepository aipRepository;
+
+    @Autowired
+    protected ILastAIPRepository lastAipRepository;
 
     @Autowired
     protected IAbstractRequestRepository requestRepository;
@@ -104,12 +118,14 @@ public class IngestServiceTest {
                 ingestProcessingChainRepository.deleteAllInBatch();
                 ingestRequestRepository.deleteAllInBatch();
                 requestRepository.deleteAllInBatch();
+                lastAipRepository.deleteAllInBatch();
                 aipRepository.deleteAllInBatch();
+                lastSipRepository.deleteAllInBatch();
                 sipRepository.deleteAllInBatch();
                 jobInfoRepo.deleteAll();
                 pluginConfRepo.deleteAllInBatch();
                 cleanAMQPQueues(FileRequestGroupEventHandler.class, Target.ONE_PER_MICROSERVICE_TYPE);
-                done = true;
+                done = waitAllRequestsFinished();
             } catch (DataAccessException e) {
                 LOGGER.error(e.getMessage(), e);
             }
@@ -169,13 +185,13 @@ public class IngestServiceTest {
                 newCount = totalCount;
             }
             if (newCount != sipCount) {
-                LOGGER.info("{} new SIP(s) {} in database", newCount - sipCount,
-                            sipState != null ? sipState.toString() : "ALL_STATUS");
+                LOGGER.info(NEW_SIP_S_IN_DATABASE_TEMPLATE, newCount - sipCount,
+                            sipState != null ? sipState.toString() : ALL_STATUS);
             }
             sipCount = newCount;
             if (timerStop(expectedSips, end, sipCount, String
-                    .format("Timeout after waiting for %s SIPs in %s. Acutal=%s. Total count %s (no specific status)",
-                            expectedSips, sipState != null ? sipState.toString() : "ALL_STATUS", sipCount,
+                    .format("Timeout after waiting %s ms for %s SIPs in %s. Actual=%s. Total count %s (no specific status)",
+                            timeout, expectedSips, sipState != null ? sipState.toString() : ALL_STATUS, sipCount,
                             totalCount))) {
                 break;
             }
@@ -198,13 +214,13 @@ public class IngestServiceTest {
                 newCount = totalCount;
             }
             if (newCount != aipCount) {
-                LOGGER.info("{} new SIP(s) {} in database", newCount - aipCount,
-                            aipState != null ? aipState.toString() : "ALL_STATUS");
+                LOGGER.info(NEW_SIP_S_IN_DATABASE_TEMPLATE, newCount - aipCount,
+                            aipState != null ? aipState.toString() : ALL_STATUS);
             }
             aipCount = newCount;
             if (timerStop(expectedSips, end, aipCount, String
                     .format("Timeout after waiting for %s SIPs in %s. Acutal=%s. Total count %s (no specific status)",
-                            expectedSips, aipState != null ? aipState.toString() : "ALL_STATUS", aipCount,
+                            expectedSips, aipState != null ? aipState.toString() : ALL_STATUS, aipCount,
                             totalCount))) {
                 break;
             }
@@ -227,13 +243,13 @@ public class IngestServiceTest {
                 newCount = totalCount;
             }
             if (newCount != requestCount) {
-                LOGGER.info("{} new SIP(s) {} in database", newCount - requestCount,
-                            requestState != null ? requestState.toString() : "ALL_STATUS");
+                LOGGER.info(NEW_SIP_S_IN_DATABASE_TEMPLATE, newCount - requestCount,
+                            requestState != null ? requestState.toString() : ALL_STATUS);
             }
             requestCount = newCount;
             if (timerStop(expectedSips, end, requestCount, String
                     .format("Timeout after waiting for %s SIPs in %s. Acutal=%s. Total count %s (no specific status)",
-                            expectedSips, requestState != null ? requestState.toString() : "ALL_STATUS", requestCount,
+                            expectedSips, requestState != null ? requestState.toString() : ALL_STATUS, requestCount,
                             totalCount))) {
                 break;
             }
@@ -304,6 +320,20 @@ public class IngestServiceTest {
         } while (true);
     }
 
+    public boolean waitAllRequestsFinished() {
+        try {
+            Thread.sleep(1000);
+            // Wait
+            long count = abstractRequestRepository
+                    .countByStateIn(Sets.newHashSet(InternalRequestState.BLOCKED, InternalRequestState.CREATED,
+                                                    InternalRequestState.RUNNING, InternalRequestState.TO_SCHEDULE));
+            LOGGER.info("{} Current request running", count);
+            return count == 0;
+        } catch (InterruptedException e) {
+            return false;
+        }
+    }
+
     public void waitDuring(long delay) {
         try {
             Thread.sleep(delay);
@@ -318,8 +348,15 @@ public class IngestServiceTest {
      * @param mtd
      */
     public void sendIngestRequestEvent(SIP sip, IngestMetadataDto mtd) {
-        IngestRequestFlowItem flowItem = IngestRequestFlowItem.build(mtd, sip);
-        publisher.publish(flowItem);
+        sendIngestRequestEvent(Sets.newHashSet(sip), mtd);
+    }
+
+    public void sendIngestRequestEvent(Collection<SIP> sips, IngestMetadataDto mtd) {
+        List<IngestRequestFlowItem> toSend = new ArrayList<>(sips.size());
+        for (SIP sip : sips) {
+            toSend.add(IngestRequestFlowItem.build(mtd, sip));
+        }
+        publisher.publish(toSend);
     }
 
 }

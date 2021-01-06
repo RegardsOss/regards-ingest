@@ -18,13 +18,7 @@
  */
 package fr.cnes.regards.modules.ingest.service.request;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -32,11 +26,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -46,7 +36,6 @@ import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Table;
-
 import fr.cnes.regards.framework.authentication.IAuthenticationResolver;
 import fr.cnes.regards.framework.jpa.multitenant.transactional.MultitenantTransactional;
 import fr.cnes.regards.framework.modules.jobs.domain.JobInfo;
@@ -55,7 +44,7 @@ import fr.cnes.regards.framework.modules.jobs.domain.JobStatus;
 import fr.cnes.regards.framework.modules.jobs.service.IJobInfoService;
 import fr.cnes.regards.framework.multitenant.IRuntimeTenantResolver;
 import fr.cnes.regards.modules.ingest.dao.AbstractRequestSpecifications;
-import fr.cnes.regards.modules.ingest.dao.IAIPStoreMetaDataRepository;
+import fr.cnes.regards.modules.ingest.dao.IAIPPostProcessRequestRepository;
 import fr.cnes.regards.modules.ingest.dao.IAIPUpdateRequestRepository;
 import fr.cnes.regards.modules.ingest.dao.IAbstractRequestRepository;
 import fr.cnes.regards.modules.ingest.dao.IIngestRequestRepository;
@@ -63,21 +52,19 @@ import fr.cnes.regards.modules.ingest.domain.aip.AIPEntity;
 import fr.cnes.regards.modules.ingest.domain.mapper.IRequestMapper;
 import fr.cnes.regards.modules.ingest.domain.request.AbstractRequest;
 import fr.cnes.regards.modules.ingest.domain.request.InternalRequestState;
+import fr.cnes.regards.modules.ingest.domain.request.deletion.DeletionRequestStep;
 import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionCreatorRequest;
 import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionRequest;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequest;
-import fr.cnes.regards.modules.ingest.domain.request.manifest.AIPStoreMetaDataRequest;
+import fr.cnes.regards.modules.ingest.domain.request.postprocessing.AIPPostProcessRequest;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdateRequest;
+import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdateRequestStep;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdatesCreatorRequest;
 import fr.cnes.regards.modules.ingest.dto.request.RequestDto;
 import fr.cnes.regards.modules.ingest.dto.request.RequestTypeConstant;
 import fr.cnes.regards.modules.ingest.dto.request.RequestTypeEnum;
 import fr.cnes.regards.modules.ingest.dto.request.SearchRequestsParameters;
-import fr.cnes.regards.modules.ingest.service.job.AIPUpdatesCreatorJob;
-import fr.cnes.regards.modules.ingest.service.job.IngestJobPriority;
-import fr.cnes.regards.modules.ingest.service.job.OAISDeletionsCreatorJob;
-import fr.cnes.regards.modules.ingest.service.job.RequestDeletionJob;
-import fr.cnes.regards.modules.ingest.service.job.RequestRetryJob;
+import fr.cnes.regards.modules.ingest.service.job.*;
 import fr.cnes.regards.modules.ingest.service.session.SessionNotifier;
 import fr.cnes.regards.modules.storage.client.RequestInfo;
 
@@ -97,13 +84,13 @@ public class RequestService implements IRequestService {
     private IIngestRequestRepository ingestRequestRepository;
 
     @Autowired
-    private IAIPStoreMetaDataRepository aipStoreMetaDataRepository;
-
-    @Autowired
     private IAbstractRequestRepository abstractRequestRepository;
 
     @Autowired
     private IAIPUpdateRequestRepository aipUpdateRequestRepository;
+
+    @Autowired
+    private IAIPPostProcessRequestRepository aipPostProcessRequestRepository;
 
     @Autowired
     private IRequestMapper requestMapper;
@@ -174,10 +161,6 @@ public class RequestService implements IRequestService {
         List<IngestRequest> requests = ingestRequestRepository.findAllByAipsIdIn(aipIds);
         requests.forEach(sessionNotifier::ingestRequestErrorDeleted);
         ingestRequestRepository.deleteAll(requests);
-
-        List<AIPStoreMetaDataRequest> storeMetaRequests = aipStoreMetaDataRepository.findAllByAipIdIn(aipIds);
-        storeMetaRequests.forEach(sessionNotifier::decrementMetaStoreError);
-        aipStoreMetaDataRepository.deleteAll(storeMetaRequests);
 
         List<AIPUpdateRequest> updateRequests = aipUpdateRequestRepository.findAllByAipIdIn(aipIds);
         aipUpdateRequestRepository.deleteAll(updateRequests);
@@ -318,8 +301,12 @@ public class RequestService implements IRequestService {
                 sessionNotifier.ingestRequestErrorDeleted(ingReq.get());
                 sessionNotifier.decrementProductCount(ingReq.get());
             }
-        } else if (request instanceof AIPStoreMetaDataRequest) {
-            sessionNotifier.decrementMetaStoreError((AIPStoreMetaDataRequest) request);
+        } else if (request instanceof AIPPostProcessRequest) {
+            Optional<AIPPostProcessRequest> req = aipPostProcessRequestRepository.findById(request.getId());
+            if (req.isPresent()) {
+                sessionNotifier.decrementPostProcessError(req.get());
+                sessionNotifier.incrementPostProcessPending(req.get());
+            }
         }
         request.setState(InternalRequestState.TO_SCHEDULE);
         request.clearError();
@@ -432,18 +419,31 @@ public class RequestService implements IRequestService {
                                                                                               sessionOp);
                 break;
             case RequestTypeConstant.OAIS_DELETION_VALUE:
-                spec = AbstractRequestSpecifications
-                        .searchRequestBlockingOAISDeletion(sessionOwnerOp, sessionOp,
-                                                           ((OAISDeletionRequest) request).getAip().getId());
-                break;
-            case RequestTypeConstant.STORE_METADATA_VALUE:
-                spec = AbstractRequestSpecifications.searchRequestBlockingStoreMeta(sessionOwnerOp, sessionOp);
+                if(((OAISDeletionRequest) request).getStep() != DeletionRequestStep.REMOTE_NOTIFICATION_ERROR) {
+                    spec = AbstractRequestSpecifications
+                            .searchRequestBlockingOAISDeletion(sessionOwnerOp, sessionOp,
+                                                               ((OAISDeletionRequest) request).getAip().getId());
+                } else {
+                    // In case of notification error, aip has already been deleted so do not delay request.
+                    return false;
+                }
                 break;
             case RequestTypeConstant.UPDATE_VALUE:
-                spec = AbstractRequestSpecifications.searchRequestBlockingUpdate(sessionOwnerOp, sessionOp);
+                if(((AIPUpdateRequest) request).getStep() != AIPUpdateRequestStep.REMOTE_NOTIFICATION_ERROR) {
+                    spec = AbstractRequestSpecifications.searchRequestBlockingUpdate(sessionOwnerOp, sessionOp);
+                } else {
+                    // In case of notification error, aip has already been updated so do not delay request
+                    return false;
+                }
+                break;
+            case RequestTypeConstant.AIP_POST_PROCESS_VALUE:
+                spec = AbstractRequestSpecifications.searchRequestBlockingAIPPostProcess(sessionOwnerOp, sessionOp);
                 break;
             case RequestTypeConstant.INGEST_VALUE:
                 // Ingest cannot be blocked
+                return false;
+            case RequestTypeConstant.AIP_SAVE_METADATA_VALUE:
+                // Save metadata cannot be blocked
                 return false;
             default:
                 throw new IllegalArgumentException(String

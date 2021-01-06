@@ -18,11 +18,11 @@
  */
 package fr.cnes.regards.modules.ingest.domain.request.deletion;
 
-import javax.validation.constraints.NotNull;
-
 import fr.cnes.regards.modules.ingest.domain.IngestValidationMessages;
+import fr.cnes.regards.modules.ingest.domain.aip.AIPEntity;
 import fr.cnes.regards.modules.ingest.dto.aip.AbstractSearchAIPsParameters;
 import fr.cnes.regards.modules.ingest.dto.request.SessionDeletionMode;
+import javax.validation.constraints.NotNull;
 
 /**
  * Payload for {@link OAISDeletionRequest}
@@ -47,6 +47,8 @@ public class OAISDeletionPayload extends AbstractSearchAIPsParameters<OAISDeleti
     @NotNull(message = "Deletion request step is required")
     private DeletionRequestStep step;
 
+    private AIPEntity aipToNotify;
+
     public SessionDeletionMode getDeletionMode() {
         return deletionMode;
     }
@@ -61,6 +63,14 @@ public class OAISDeletionPayload extends AbstractSearchAIPsParameters<OAISDeleti
         odp.step = DeletionRequestStep.INITIAL;
         odp.deleteFiles = deleteFiles;
         return odp;
+    }
+
+    public void setAipToNotify(AIPEntity aipToNotify) {
+        this.aipToNotify = aipToNotify;
+    }
+
+    public AIPEntity getAipToNotify() {
+        return aipToNotify;
     }
 
     public DeletionRequestStep getStep() {

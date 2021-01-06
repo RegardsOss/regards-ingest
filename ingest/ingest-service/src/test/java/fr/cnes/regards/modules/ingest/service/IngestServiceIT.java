@@ -34,17 +34,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
 import com.google.common.collect.Sets;
-
 import fr.cnes.regards.framework.module.rest.exception.EntityInvalidException;
 import fr.cnes.regards.framework.module.rest.exception.ModuleException;
+import fr.cnes.regards.framework.modules.jobs.domain.JobStatus;
+import fr.cnes.regards.framework.modules.jobs.service.IJobInfoService;
 import fr.cnes.regards.framework.test.report.annotation.Purpose;
 import fr.cnes.regards.framework.test.report.annotation.Requirement;
 import fr.cnes.regards.framework.urn.DataType;
 import fr.cnes.regards.framework.urn.EntityType;
-import fr.cnes.regards.modules.ingest.dao.IAIPStoreMetaDataRepository;
+import fr.cnes.regards.modules.ingest.dao.IAIPPostProcessRequestRepository;
 import fr.cnes.regards.modules.ingest.domain.chain.IngestProcessingChain;
 import fr.cnes.regards.modules.ingest.domain.request.InternalRequestState;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequest;
@@ -55,6 +57,9 @@ import fr.cnes.regards.modules.ingest.dto.aip.StorageMetadata;
 import fr.cnes.regards.modules.ingest.dto.sip.IngestMetadataDto;
 import fr.cnes.regards.modules.ingest.dto.sip.SIP;
 import fr.cnes.regards.modules.ingest.dto.sip.SIPCollection;
+import fr.cnes.regards.modules.ingest.service.aip.AIPPostProcessService;
+import fr.cnes.regards.modules.ingest.service.job.IngestPostProcessingJob;
+import fr.cnes.regards.modules.ingest.service.plugin.AIPPostProcessTestPlugin;
 import fr.cnes.regards.modules.ingest.service.request.IIngestRequestService;
 
 /**
@@ -63,8 +68,9 @@ import fr.cnes.regards.modules.ingest.service.request.IIngestRequestService;
  */
 @TestPropertySource(
         properties = { "spring.jpa.properties.hibernate.default_schema=ingest", "eureka.client.enabled=false",
-                "regards.aips.save-metadata.bulk.delay=100", "regards.ingest.aip.delete.bulk.delay=100" },
+                "regards.ingest.aip.delete.bulk.delay=100" },
         locations = { "classpath:application-test.properties" })
+@ActiveProfiles(value = {"noschedule"})
 public class IngestServiceIT extends IngestMultitenantServiceTest {
 
     @SuppressWarnings("unused")
@@ -74,21 +80,25 @@ public class IngestServiceIT extends IngestMultitenantServiceTest {
     private IIngestService ingestService;
 
     @Autowired
-    private IAIPStoreMetaDataRepository storeMetaRepo;
+    private IAIPPostProcessRequestRepository postProcessRepo;
 
     @SpyBean
     private IIngestRequestService ingestRequestService;
+
+    @Autowired
+    private IJobInfoService jobInfoService;
+
+    @Autowired
+    private AIPPostProcessService aipPostProcessService;
 
     private final static String SESSION_OWNER = "sessionOwner";
 
     private final static String SESSION = "session";
 
     @Override
-    public void doInit() {
-        simulateApplicationReadyEvent();
-        // Re-set tenant because above simulation clear it!
-        runtimeTenantResolver.forceTenant(getDefaultTenant());
-
+    public void doInit() throws ModuleException {
+        // Creates a test chain with default post processing plugin
+        createChainWithPostProcess(CHAIN_PP_LABEL, AIPPostProcessTestPlugin.class);
         Mockito.clearInvocations(ingestRequestService);
     }
 
@@ -106,9 +116,35 @@ public class IngestServiceIT extends IngestMultitenantServiceTest {
     }
 
     @Test
+    @Purpose("Test postprocess requests creation")
+    public void ingestWithPostProcess() throws EntityInvalidException, InterruptedException {
+        // Ingest SIP with no dataObject
+        String providerId = "SIP_001";
+        SIPCollection sips = SIPCollection.build(IngestMetadataDto
+                .build(SESSION_OWNER, SESSION, CHAIN_PP_LABEL, Sets.newHashSet("CAT"), StorageMetadata.build("disk")));
+        sips.add(SIP.build(EntityType.DATA, providerId));
+        ingestService.handleSIPCollection(sips);
+        ingestServiceTest.waitForIngestion(1, TEN_SECONDS);
+
+        // Check that the SIP is STORED
+        SIPEntity entity = sipRepository.findTopByProviderIdOrderByCreationDateDesc(providerId);
+        Assert.assertNotNull(entity);
+        Assert.assertTrue(providerId.equals(entity.getProviderId()));
+        Assert.assertTrue(entity.getVersion() == 1);
+        Assert.assertTrue(SIPState.STORED.equals(entity.getState()));
+
+        // A post process request should be created
+        Assert.assertEquals("There should be one post process request created", 1L, postProcessRepo.count());
+
+        // wait for postprocessing job scheduling
+        Thread.sleep(FIVE_SECONDS);
+        Assert.assertEquals(1L, jobInfoService.retrieveJobsCount(IngestPostProcessingJob.class.getName(),
+                                       JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.SUCCEEDED).longValue());
+    }
+
+    @Test
     @Purpose("Ingest a SIP with no contentInformation to store. Only manifest should be stored.")
     public void ingestWithoutAnyDataFile() throws EntityInvalidException {
-        Assert.assertEquals("There should be no store metadata request in db", 0L, storeMetaRepo.count());
         // Ingest SIP with no dataObject
         String providerId = "SIP_001";
         SIPCollection sips = SIPCollection
@@ -124,9 +160,6 @@ public class IngestServiceIT extends IngestMultitenantServiceTest {
         Assert.assertTrue(providerId.equals(entity.getProviderId()));
         Assert.assertTrue(entity.getVersion() == 1);
         Assert.assertTrue(SIPState.STORED.equals(entity.getState()));
-
-        // A store meta request should be created
-        Assert.assertEquals("There should be one store metadata request created", 1L, storeMetaRepo.count());
     }
 
     /**

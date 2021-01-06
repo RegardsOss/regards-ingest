@@ -19,7 +19,6 @@
 package fr.cnes.regards.modules.ingest.service.job;
 
 import java.time.OffsetDateTime;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -39,7 +38,6 @@ import fr.cnes.regards.framework.oais.urn.OaisUniformResourceName;
 import fr.cnes.regards.framework.urn.EntityType;
 import fr.cnes.regards.modules.ingest.dao.AbstractRequestSpecifications;
 import fr.cnes.regards.modules.ingest.dao.IAIPRepository;
-import fr.cnes.regards.modules.ingest.dao.IAIPStoreMetaDataRepository;
 import fr.cnes.regards.modules.ingest.dao.IAIPUpdateRequestRepository;
 import fr.cnes.regards.modules.ingest.dao.IAIPUpdatesCreatorRepository;
 import fr.cnes.regards.modules.ingest.dao.IAbstractRequestRepository;
@@ -56,7 +54,6 @@ import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionCreato
 import fr.cnes.regards.modules.ingest.domain.request.deletion.OAISDeletionRequest;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequest;
 import fr.cnes.regards.modules.ingest.domain.request.ingest.IngestRequestStep;
-import fr.cnes.regards.modules.ingest.domain.request.manifest.AIPStoreMetaDataRequest;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdateRequest;
 import fr.cnes.regards.modules.ingest.domain.request.update.AIPUpdatesCreatorRequest;
 import fr.cnes.regards.modules.ingest.domain.sip.SIPEntity;
@@ -79,9 +76,9 @@ import fr.cnes.regards.modules.ingest.service.request.IRequestService;
 @TestPropertySource(
         properties = { "spring.jpa.properties.hibernate.default_schema=request_retry_job", "regards.amqp.enabled=true",
                 "regards.ingest.aip.update.bulk.delay=100000000", "eureka.client.enabled=false",
-                "regards.aips.save-metadata.bulk.delay=100", "regards.ingest.aip.delete.bulk.delay=100" },
+                "regards.ingest.aip.delete.bulk.delay=100" },
         locations = { "classpath:application-test.properties" })
-@ActiveProfiles(value = { "testAmqp" })
+@ActiveProfiles(value = { "testAmqp", "noschedule" })
 public class RequestRetryJobIT extends IngestMultitenantServiceTest {
 
     private static final List<String> CATEGORIES_0 = Lists.newArrayList("CATEGORY");
@@ -100,9 +97,6 @@ public class RequestRetryJobIT extends IngestMultitenantServiceTest {
 
     @Autowired
     private ISIPRepository sipRepository;
-
-    @Autowired
-    private IAIPStoreMetaDataRepository storeMetaDataRepository;
 
     @Autowired
     private IAIPUpdatesCreatorRepository aipUpdatesCreatorRepository;
@@ -128,13 +122,6 @@ public class RequestRetryJobIT extends IngestMultitenantServiceTest {
     private List<AIPEntity> aips;
 
     private IngestMetadataDto mtd;
-
-    @Override
-    public void doInit() {
-        simulateApplicationReadyEvent();
-        // Re-set tenant because above simulation clear it!
-        runtimeTenantResolver.forceTenant(getDefaultTenant());
-    }
 
     public void initData() {
         LOGGER.info("=========================> BEGIN INIT DATA FOR TESTS <=====================");
@@ -176,11 +163,6 @@ public class RequestRetryJobIT extends IngestMultitenantServiceTest {
         aips = aipRepository.findAll();
 
         // Create an event of each type and ensure they are not consummed by jobs / queue / whatever
-        AIPStoreMetaDataRequest storeMetaDataRequest = AIPStoreMetaDataRequest.build(aips.get(0), new HashSet<>(), true,
-                                                                                     true);
-        storeMetaDataRequest.setState(InternalRequestState.ERROR);
-        storeMetaDataRepository.save(storeMetaDataRequest);
-
         AIPUpdatesCreatorRequest updateCreatorRequest = AIPUpdatesCreatorRequest.build(AIPUpdateParametersDto
                 .build(SearchAIPsParameters.build().withSession(SESSION_0).withSessionOwner(SESSION_OWNER_0)));
         updateCreatorRequest.setState(InternalRequestState.ERROR);
@@ -192,7 +174,7 @@ public class RequestRetryJobIT extends IngestMultitenantServiceTest {
         updateRequest.get(0).setState(InternalRequestState.ERROR);
         aipUpdateRequestRepository.saveAll(updateRequest);
 
-        IngestRequest ir = IngestRequest.build(mapper.dtoToMetadata(mtd), InternalRequestState.ERROR,
+        IngestRequest ir = IngestRequest.build(null, mapper.dtoToMetadata(mtd), InternalRequestState.ERROR,
                                                IngestRequestStep.REMOTE_STORAGE_ERROR, aips.get(0).getSip().getSip());
         ir.setAips(aips);
         ingestRequestRepository.save(ir);
@@ -244,7 +226,7 @@ public class RequestRetryJobIT extends IngestMultitenantServiceTest {
     @Test
     public void testRetryJob() {
         initData();
-        Assert.assertEquals("Something went wrong while creating requests", 6, abstractRequestRepository.count());
+        Assert.assertEquals("Something went wrong while creating requests", 5, abstractRequestRepository.count());
         requestService.scheduleRequestRetryJob(SearchRequestsParameters.build()
                 .withRequestType(RequestTypeEnum.AIP_UPDATES_CREATOR));
         waitForErrorRequestReach(5, 20_000);

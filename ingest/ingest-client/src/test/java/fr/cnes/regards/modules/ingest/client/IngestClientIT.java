@@ -21,6 +21,7 @@ package fr.cnes.regards.modules.ingest.client;
 import java.nio.file.Paths;
 import java.util.UUID;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -104,18 +105,18 @@ public class IngestClientIT extends AbstractRegardsWebIT {
     public void ingest() throws IngestClientException, InterruptedException {
 
         String providerId = "sipFromClient";
+        Mockito.clearInvocations(listener);
+        Mockito.verify(listener, Mockito.times(0)).onGranted(Mockito.anyCollection());
         RequestInfo clientInfo = ingestClient.ingest(IngestMetadataDto
                 .build("sessionOwner", "session", IngestProcessingChain.DEFAULT_INGEST_CHAIN_LABEL,
                        Sets.newHashSet("cat 1"), StorageMetadata.build("disk")), create(providerId));
         ingestServiceTest.waitForIngestion(1, 15_000, SIPState.STORED);
 
-        Mockito.verify(listener, Mockito.times(1)).onGranted(Mockito.anyCollection());
-        Assert.assertEquals(clientInfo.getRequestId(), listener.getGranted().iterator().next().getRequestId());
-
         Thread.sleep(5_000);
-
-        Mockito.verify(listener, Mockito.times(1)).onSuccess(Mockito.anyCollection());
-        Assert.assertEquals(clientInfo.getRequestId(), listener.getSuccess().iterator().next().getRequestId());
+        Assert.assertTrue("Missing granted request response", listener.getGranted().stream()
+                .anyMatch(r -> r.getRequestId().equals(clientInfo.getRequestId())));
+        Assert.assertTrue("Missing success request response", listener.getSuccess().stream()
+                .anyMatch(r -> r.getRequestId().equals(clientInfo.getRequestId())));
     }
 
     private SIP create(String providerId) {
@@ -131,5 +132,12 @@ public class IngestClientIT extends AbstractRegardsWebIT {
         sip.withEvent(String.format("SIP %s generated", providerId));
 
         return sip;
+    }
+
+    @After
+    public void doAfter() {
+        ingestServiceTest.init();
+        ingestServiceTest.cleanAMQPQueues(IngestRequestEventHandler.class, Target.ONE_PER_MICROSERVICE_TYPE);
+        listener.clear();
     }
 }

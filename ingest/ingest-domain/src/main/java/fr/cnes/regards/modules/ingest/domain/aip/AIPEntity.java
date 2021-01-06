@@ -47,6 +47,7 @@ import fr.cnes.regards.modules.ingest.dto.aip.AIP;
         @Index(name = "idx_aip_categories", columnList = "categories"),
         @Index(name = "idx_aip_sip_id", columnList = "sip_id"), @Index(name = "idx_aip_state", columnList = "state"),
         @Index(name = "idx_aipid", columnList = "aip_id") })
+// There cannot be any unique constraint on last because there will always be multiple value with false!!!!
 public class AIPEntity extends AbstractAIPEntity {
 
     /**
@@ -56,23 +57,6 @@ public class AIPEntity extends AbstractAIPEntity {
     @ManyToOne
     @JoinColumn(name = "sip_id", foreignKey = @ForeignKey(name = "fk_sip"))
     private SIPEntity sip;
-
-    /**
-     * Manifest locations (the manifest itself can be stored at several locations)
-     */
-    @Valid
-    @Column(columnDefinition = "jsonb", name = "manifest_locations", nullable = false)
-    @Type(type = "jsonb", parameters = { @Parameter(name = JsonTypeDescriptor.ARG_TYPE,
-            value = "fr.cnes.regards.framework.oais.OAISDataObjectLocation") })
-    private Set<OAISDataObjectLocation> manifestLocations = new HashSet<>();
-
-    public Set<OAISDataObjectLocation> getManifestLocations() {
-        return manifestLocations;
-    }
-
-    public void setManifestLocations(Set<OAISDataObjectLocation> manifestLocations) {
-        this.manifestLocations = manifestLocations;
-    }
 
     public SIPEntity getSip() {
         return sip;

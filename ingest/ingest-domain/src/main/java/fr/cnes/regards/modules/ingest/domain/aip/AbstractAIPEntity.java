@@ -84,17 +84,14 @@ public abstract class AbstractAIPEntity extends AbstractOAISEntity {
     private AIP aip;
 
     /**
-     * Real AIP content checksum, computed once all associated files are stored
-     */
-    @Column(name = "checksum", length = SIPEntity.CHECKSUM_MAX_LENGTH)
-    private String checksum;
-
-    /**
      * Storage lists used by this AIP to store its files
      */
     @Column(columnDefinition = "jsonb", name = "storages", nullable = false)
     @Type(type = "jsonb", parameters = { @Parameter(name = JsonTypeDescriptor.ARG_TYPE, value = "java.lang.String") })
     private Set<String> storages = new HashSet<>();
+
+    @Column
+    private boolean last = false;
 
     public Long getId() {
         return id;
@@ -132,20 +129,20 @@ public abstract class AbstractAIPEntity extends AbstractOAISEntity {
         this.aipId = aipId.toString();
     }
 
-    public String getChecksum() {
-        return checksum;
-    }
-
-    public void setChecksum(String checksum) {
-        this.checksum = checksum;
-    }
-
     public Set<String> getStorages() {
         return storages;
     }
 
     public void setStorages(Set<String> storages) {
         this.storages = storages;
+    }
+
+    public boolean isLast() {
+        return last;
+    }
+
+    public void setLast(boolean last) {
+        this.last = last;
     }
 
     public static AIPEntity build(AIPState state, AIP aip) {

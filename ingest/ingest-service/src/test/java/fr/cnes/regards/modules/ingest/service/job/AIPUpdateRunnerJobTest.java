@@ -19,11 +19,7 @@
 package fr.cnes.regards.modules.ingest.service.job;
 
 import java.time.OffsetDateTime;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RunnableFuture;
 
@@ -40,16 +36,13 @@ import org.springframework.test.context.TestPropertySource;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
 import fr.cnes.regards.framework.module.rest.exception.ModuleException;
-import fr.cnes.regards.framework.modules.jobs.dao.IJobInfoRepository;
 import fr.cnes.regards.framework.modules.jobs.domain.JobInfo;
 import fr.cnes.regards.framework.modules.jobs.service.IJobService;
 import fr.cnes.regards.framework.test.report.annotation.Purpose;
 import fr.cnes.regards.framework.test.report.annotation.Requirement;
 import fr.cnes.regards.framework.test.report.annotation.Requirements;
 import fr.cnes.regards.modules.ingest.dao.IAIPUpdateRequestRepository;
-import fr.cnes.regards.modules.ingest.dao.IAbstractRequestRepository;
 import fr.cnes.regards.modules.ingest.domain.aip.AIPEntity;
 import fr.cnes.regards.modules.ingest.domain.sip.SIPState;
 import fr.cnes.regards.modules.ingest.dto.aip.SearchAIPsParameters;
@@ -71,7 +64,7 @@ import fr.cnes.regards.modules.storage.domain.dto.request.RequestResultInfoDTO;
  */
 @TestPropertySource(properties = { "spring.jpa.properties.hibernate.default_schema=update_oais_job",
         "regards.amqp.enabled=true", "regards.ingest.aip.update.bulk.delay=100000000",
-        "regards.aips.save-metadata.bulk.delay=100", "eureka.client.enabled=false" },
+        "eureka.client.enabled=false" },
         locations = { "classpath:application-test.properties" })
 @ActiveProfiles(value = { "testAmqp", "StorageClientMock" })
 public class AIPUpdateRunnerJobTest extends IngestMultitenantServiceTest {
@@ -95,12 +88,6 @@ public class AIPUpdateRunnerJobTest extends IngestMultitenantServiceTest {
 
     @Autowired
     private IJobService jobService;
-
-    @Autowired
-    private IJobInfoRepository jobInfoRepository;
-
-    @Autowired
-    private IAbstractRequestRepository abstractRequestRepository;
 
     private static final List<String> CATEGORIES_0 = Lists.newArrayList("CATEGORY", "CATEGORY00", "CATEGORY01");
 
@@ -130,13 +117,12 @@ public class AIPUpdateRunnerJobTest extends IngestMultitenantServiceTest {
 
     private static final String SESSION_1 = OffsetDateTime.now().minusDays(4).toString();
 
+    boolean isToNotify;
+
     @Override
     public void doInit() {
-        simulateApplicationReadyEvent();
-        // Re-set tenant because above simulation clear it!
-        runtimeTenantResolver.forceTenant(getDefaultTenant());
-        abstractRequestRepository.deleteAll();
-        jobInfoRepository.deleteAll();
+        // Notification
+        this.isToNotify = initDefaultNotificationSettings();
     }
 
     public void initData() throws InterruptedException {
@@ -145,7 +131,7 @@ public class AIPUpdateRunnerJobTest extends IngestMultitenantServiceTest {
         publishSIPEvent(create(UUID.randomUUID().toString(), TAG_0), STORAGE_1, SESSION_0, SESSION_OWNER_0,
                         CATEGORIES_0);
         publishSIPEvent(create(UUID.randomUUID().toString(), TAG_1), Lists.newArrayList(STORAGE_2, STORAGE_3),
-                        SESSION_0, SESSION_OWNER_0, CATEGORIES_0);
+                        SESSION_0, SESSION_OWNER_0, Lists.newArrayList(CATEGORIES_0), Optional.empty());
 
         // useless entities for this test
         publishSIPEvent(create(UUID.randomUUID().toString(), TAG_0), STORAGE_2, SESSION_1, SESSION_OWNER_0,
@@ -158,8 +144,13 @@ public class AIPUpdateRunnerJobTest extends IngestMultitenantServiceTest {
                         CATEGORIES_0);
         // Wait
         ingestServiceTest.waitForIngestion(nbSIP, nbSIP * 5000, SIPState.STORED);
-        // Wait STORE_META request over
-        ingestServiceTest.waitAllRequestsFinished(nbSIP * 5000);
+
+        if (!isToNotify) {
+            // Wait STORE_META request over
+            ingestServiceTest.waitAllRequestsFinished(nbSIP * 5000);
+        } else {
+            notificationService.handleNotificationSuccess(Sets.newHashSet(ingestRequestRepository.findAll()));
+        }
 
         // Check init datas contains the storage to remove in this test
         Page<AIPEntity> aips = aipService.findByFilters(SearchAIPsParameters.build(), PageRequest.of(0, 200));

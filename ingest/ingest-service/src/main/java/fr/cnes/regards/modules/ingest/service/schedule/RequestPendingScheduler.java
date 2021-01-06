@@ -34,6 +34,7 @@ import fr.cnes.regards.framework.multitenant.IRuntimeTenantResolver;
 import fr.cnes.regards.framework.multitenant.ITenantResolver;
 import fr.cnes.regards.modules.ingest.dto.request.RequestTypeEnum;
 import fr.cnes.regards.modules.ingest.service.request.IRequestService;
+import static fr.cnes.regards.modules.ingest.service.schedule.SchedulerConstant.*;
 import net.javacrumbs.shedlock.core.LockAssert;
 import net.javacrumbs.shedlock.core.LockConfiguration;
 import net.javacrumbs.shedlock.core.LockingTaskExecutor.Task;
@@ -46,21 +47,11 @@ import net.javacrumbs.shedlock.core.LockingTaskExecutor.Task;
  * @author Léo Mieulet
  */
 @Component
-@Profile("!noschedule")
+@Profile("!noscheduler")
 @EnableScheduling
 public class RequestPendingScheduler extends AbstractTaskScheduler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RequestPendingScheduler.class);
-
-    private static final String UNLOCK_REQ_SCHEDULER_LOCK = "request-pending-scheduler-lock";
-
-    private static final String DEFAULT_INITIAL_DELAY = "10000";
-
-    private static final String DEFAULT_SCHEDULING_DELAY = "1000";
-
-    private static final String UNLOCK_TITLE = "Unlock requests scheduling";
-
-    private static final String UNLOCK_ACTIONS = "UNLOCK REQUESTS ACTIONS";
 
     @Autowired
     private ITenantResolver tenantResolver;
@@ -79,7 +70,6 @@ public class RequestPendingScheduler extends AbstractTaskScheduler {
         requestService.unblockRequests(RequestTypeEnum.AIP_UPDATES_CREATOR);
         requestService.unblockRequests(RequestTypeEnum.OAIS_DELETION);
         requestService.unblockRequests(RequestTypeEnum.OAIS_DELETION_CREATOR);
-        requestService.unblockRequests(RequestTypeEnum.STORE_METADATA);
         requestService.unblockRequests(RequestTypeEnum.UPDATE);
     };
 
@@ -90,8 +80,9 @@ public class RequestPendingScheduler extends AbstractTaskScheduler {
             try {
                 runtimeTenantResolver.forceTenant(tenant);
                 traceScheduling(tenant, UNLOCK_ACTIONS);
-                lockingTaskExecutors.executeWithLock(unlockRequestsTask, new LockConfiguration(
-                        UNLOCK_REQ_SCHEDULER_LOCK, Instant.now().plusSeconds(120)));
+                lockingTaskExecutors.executeWithLock(unlockRequestsTask,
+                                                     new LockConfiguration(UNLOCK_REQ_SCHEDULER_LOCK,
+                                                                           Instant.now().plusSeconds(120)));
             } catch (Throwable e) {
                 handleSchedulingError(UNLOCK_ACTIONS, UNLOCK_TITLE, e);
             } finally {

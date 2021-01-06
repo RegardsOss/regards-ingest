@@ -65,6 +65,7 @@ import fr.cnes.regards.modules.ingest.dto.sip.SIP;
         // PostgreSQL manage both single indexes and multiple ones
         uniqueConstraints = { @UniqueConstraint(name = "uk_sip_sipId", columnNames = "sipId"),
                 @UniqueConstraint(name = "uk_sip_checksum", columnNames = "checksum") })
+// There cannot be any unique constraint on last because there will always be multiple value with false!!!!
 @TypeDefs({ @TypeDef(name = "jsonb", typeClass = JsonBinaryType.class) })
 public class SIPEntity extends AbstractOAISEntity {
 
@@ -104,6 +105,9 @@ public class SIPEntity extends AbstractOAISEntity {
     @Column(columnDefinition = "jsonb", name = "rawsip")
     @Type(type = "jsonb")
     private SIP sip;
+
+    @Column
+    private boolean last = false;
 
     public String getSipId() {
         return sipId;
@@ -148,6 +152,14 @@ public class SIPEntity extends AbstractOAISEntity {
 
     public Long getId() {
         return id;
+    }
+
+    public boolean isLast() {
+        return last;
+    }
+
+    public void setLast(boolean last) {
+        this.last = last;
     }
 
     @Override
@@ -204,7 +216,7 @@ public class SIPEntity extends AbstractOAISEntity {
 
     public static OaisUniformResourceName generationUrn(String tenant, SIP sip, Integer version) {
         UUID uuid = UUID.nameUUIDFromBytes(sip.getId().getBytes());
-        return new OaisUniformResourceName(OAISIdentifier.SIP, sip.getIpType(), tenant, uuid, version);
+        return new OaisUniformResourceName(OAISIdentifier.SIP, sip.getIpType(), tenant, uuid, version, null, null);
     }
 
 }
